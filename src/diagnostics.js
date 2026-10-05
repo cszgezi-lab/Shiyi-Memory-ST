@@ -66,6 +66,12 @@ export const DIAGNOSTIC_REASONS = Object.freeze({
   output_blocked:'接口明确报告内容过滤', invalid_chat_response:'接口缺少聊天回复',
   storage_read:'读取存档失败', storage_write:'写入存档失败', storage_readback:'写入后无法读回',
   storage_mismatch:'写入内容与读回内容不一致', storage_decode:'存档完整性校验失败',
+  person_delete_busy:'人物记录正在更新，本次尚未开始删除',
+  person_delete_stale:'人物记录或删除范围已变化，本次尚未开始删除',
+  person_delete_merged:'要移除的心迹或台词来自合并事件，本次尚未开始删除',
+  person_delete_missing:'要删除的人物记录已不存在，本次尚未开始删除',
+  person_delete_storage:'人物删除前的存储检查未通过，本次尚未开始删除',
+  person_delete_partial:'人物删除的保存结果尚未全部确认，需核对已处理与剩余项',
   log_document_invalid:'旧日志格式无法读取，未覆盖旧文件', unclassified:'错误未提供可识别原因；请结合阶段与代码位置定位',
 });
 export const PERSONA_STEPS=Object.freeze({history_tail:'读取当前聊天进度',history_range:'读取本批原文',api_config:'检查人设 API 配置',worldbook_read:'读取角色原世界书',prepare_profile:'整理人设输入',cached_response:'读取暂存回答',model_request:'请求人设模型',parse_profile:'解析与检查人设回答',source_verify:'保存前复查原文',worldbook_verify:'保存前复查世界书',profile_save:'保存人物档案',failure_save:'保存失败进度'});
@@ -128,7 +134,7 @@ export function nativeStreamErrorCode(message){
   ];
   return prefixes.find(([,pattern])=>pattern.test(line))?.[0];
 }
-export const DIAGNOSTIC_ACTIONS=Object.freeze({editDocumentChunk:'修改资料片段',catchUpAutomatic:'补采未记录楼层',inspectAutomaticProgress:'检查记录覆盖',open:'打开聊天',refresh:'刷新记忆',saveSettings:'保存设置',saveApi:'保存 API',forgetKey:'清除密钥',editRecord:'修改记忆',editPersonProfile:'修改人物档案',deleteRecord:'删除记忆',deleteRecords:'批量删除记忆',remember:'新增记忆',manageBatches:'管理总结批次',deleteBatch:'删除批次',regenerateBatch:'重新总结',retryBatch:'重试总结',retryIncompleteBatches:'重试未完成批次',saveModule:'保存扩展模块',editModuleRecord:'修改扩展记忆',rememberModule:'新增扩展记忆',importModules:'导入模块',exportModules:'导出模块',inspectMvu:'读取 MVU',syncModules:'同步 MVU',applyProposal:'应用助手方案',undoSettings:'撤销配置',saveDictionaryEntry:'修改字典',exportBackup:'导出聊天备份',exportGlobalBackup:'导出全局备份',setAutoStartFloor:'设置自动总结起点',setAutomatic:'配置自动总结',processAutomatic:'执行自动总结',setDraft:'保存助手草稿',newConversation:'新建助手对话',selectConversation:'切换助手对话',deleteConversation:'删除助手对话',hideRecord:'排除记忆',restoreHidden:'恢复被排除记忆',removeDocument:'删除知识库资料',updateDocument:'更新知识库资料',stop:'停止任务',disable:'暂停插件'});
+export const DIAGNOSTIC_ACTIONS=Object.freeze({editDocumentChunk:'修改资料片段',catchUpAutomatic:'补采未记录楼层',inspectAutomaticProgress:'检查记录覆盖',open:'打开聊天',refresh:'刷新记忆',saveSettings:'保存设置',saveApi:'保存 API',forgetKey:'清除密钥',editRecord:'修改记忆',editPersonProfile:'修改人物档案',deletePerson:'删除人物',deleteRecord:'删除记忆',deleteRecords:'批量删除记忆',remember:'新增记忆',manageBatches:'管理总结批次',deleteBatch:'删除批次',regenerateBatch:'重新总结',retryBatch:'重试总结',retryIncompleteBatches:'重试未完成批次',saveModule:'保存扩展模块',editModuleRecord:'修改扩展记忆',rememberModule:'新增扩展记忆',importModules:'导入模块',exportModules:'导出模块',inspectMvu:'读取 MVU',syncModules:'同步 MVU',applyProposal:'应用助手方案',undoSettings:'撤销配置',saveDictionaryEntry:'修改字典',exportBackup:'导出聊天备份',exportGlobalBackup:'导出全局备份',setAutoStartFloor:'设置自动总结起点',setAutomatic:'配置自动总结',processAutomatic:'执行自动总结',setDraft:'保存助手草稿',newConversation:'新建助手对话',selectConversation:'切换助手对话',deleteConversation:'删除助手对话',hideRecord:'排除记忆',restoreHidden:'恢复被排除记忆',removeDocument:'删除知识库资料',updateDocument:'更新知识库资料',stop:'停止任务',disable:'暂停插件'});
 const files=new Set(['provider-scheduler.js','summary-planner.js','request-deadline.js','provider.js','summary-stages.js','summary-context.js','summary-reference-repair.js','summary-engine.js','summary-recovery.js','contracts.js','repository.js','reliable-storage.js','host-adapter.js','dynamic-persona.js','dynamic-persona-worldbook.js','dynamic-persona-stage.js','product-application.js','product-workspace.js','product-network.js','product-shell-controller.js','product-host-adapters.js','product-view.js','product-runtime-log.js','product-model-list.js','product-vector-indexer.js','product-vector-cache.js','product-vector-storage.js','product-dictionary.js','product-event-merge.js','product-credentials.js','product-global-settings.js','product-module-controller.js','diagnostics.js']);
 // JavaException is the WebView wrapper around a throwable raised inside an
 // Android @JavascriptInterface method (TT's native export bridge). Only the
@@ -136,6 +142,8 @@ const files=new Set(['provider-scheduler.js','summary-planner.js','request-deadl
 // never stored.
 const errorTypes=new Set(['Error','TypeError','SyntaxError','RangeError','ReferenceError','AbortError','NotAllowedError','DOMException','JavaException','ShiyiError','SummaryResponseError','ValidationError','PersistenceError','ScopeConflictError','RevisionConflictError']);
 files.add('product-host-ui.js');
+files.add('product-people-view.js');
+files.add('product-dynamic-persona.js');
 files.add('product-android-export.js');
 files.add('summary-verification.js');
 files.add('provider-stream.js');

@@ -58,6 +58,14 @@ const SAFE_CODES=new Set([...Object.keys(CODES),...Object.keys(NETWORK),'OPERATI
 const MODEL_LABELS={summary:'总结模型',supplement:'辅助整理模型',dynamicPersona:'动态人设模型',personaReview:'人设辅助精修',assistant:'配置助手',embedding:'向量模型',rerank:'重排模型',knowledge:'知识库分析模型'};
 function modelLocation(role){return Object.hasOwn(MODEL_LABELS,role)?`API → ${MODEL_LABELS[role]}`:'API 中本次使用的模型卡';}
 const FAILURE_LOG='请打开“日志”→“只看失败”，导出日志交给开发者检查。';
+const PERSON_DELETE_FAILURES=Object.freeze({
+  person_delete_busy:'人物记录正在更新。请先暂停总结和动态人设任务，等当前请求结束后再删除；本次还未开始删除。',
+  person_delete_stale:'人物记录刚有变化。请刷新人物页，重新选择要删除的内容；本次还未开始删除。',
+  person_delete_merged:'要移除的心迹或台词属于合并事件。请先到“记录 → 事件合并”撤销对应合并，再回到人物页删除；本次还未开始删除。',
+  person_delete_missing:'要删除的记录已不存在。请刷新人物页后重新选择；本次还未开始删除。',
+  person_delete_storage:'保存检查未通过，本次还未开始删除。请刷新后重试；已有档案保留，仍失败时请导出运行日志。',
+  person_delete_partial:'删除结果尚未全部确认，部分关联记忆可能已进入回收站。请刷新人物页核对，剩余项可重试，回收站中的记忆可恢复。',
+});
 // Only closed, source-declared local guards can become display text. Unknown
 // Error.message and provider prose are never echoed, even when written in Chinese.
 const LOCAL_VALIDATION_MESSAGES = new Map([
@@ -442,6 +450,7 @@ export function productFailure(error) {
   }
   // Unknown messages and vendor codes may contain URLs, keys or request prose.
   // A TypeError alone also does not establish a network/configuration failure.
+  if(Object.hasOwn(PERSON_DELETE_FAILURES,error?.details?.reason))message=PERSON_DELETE_FAILURES[error.details.reason];
   if(!message&&code==='OPERATION_FAILED')message=localValidationFailure(error);
   if(!message)message=`暂时无法确认这次失败的原因。${FAILURE_LOG}`;
   if(Object.hasOwn(PERSONA_STEPS,error?.details?.personaStep))message=`${PERSONA_STEPS[error.details.personaStep]}未完成：${message}`;

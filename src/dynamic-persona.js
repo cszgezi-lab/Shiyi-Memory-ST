@@ -590,6 +590,19 @@ export function createDynamicPersona({settings,getWorkspace,readRange,historyTai
     await inspectWorldbook({silent:true}).catch(()=>{});
     }catch(error){check(bound);if(error&&typeof error==='object')error.details={...error.details,personaStep:loadStep,modelRole:'dynamicPersona',modelRequested:false};view={...view,failureDetails:safeLogDetails(errorDiagnostics(error))};if(historyFailure(error)){paused=Boolean(data.paused);deferHistory();emit();}throw error;}
   }
+  async function reconcileSaved(){
+    const bound=currentWorkspace;check(bound);
+    return transact(async()=>{
+      check(bound);ready=false;
+      // A write can be durable even when its readback failed. Read the saved
+      // state without load's migrations, source rollback or worker wake-up.
+      // Leave injection disabled if the actual saved state cannot be read.
+      const saved=await bound.read('dynamic-persona',null);check(bound);
+      if(saved&&saved.version!==1)throw new Error('人物档案版本无法读取，未覆盖');
+      data=saved??initial();paused=Boolean(data.paused);ready=true;
+      view={...view,status:paused?'paused':'ready',message:'已重新读取保存的人物档案，请核对删除结果'};emit();
+    });
+  }
   async function inspect(){check();lastIndex=await historyTail();check();emit();return plan();}
   /** Read the bound world books and refresh the ownership report. `silent` is
    * used by the automatic refresh: opening a chat must not surface an error when
@@ -1154,6 +1167,26 @@ export function createDynamicPersona({settings,getWorkspace,readRange,historyTai
     const overrides=directiveLines?{directiveOverrides:{...data.directiveOverrides,[foldName(old.name)]:directiveLines}}:{};
     await save({...data,...overrides,...(patch.casting?{castingOverrides:rememberPersonaCasting(data.castingOverrides,update)}:{}),profiles:data.profiles.map(p=>p.id===id?update:patch.deleted===true&&settings().dynamicPersonaMvuMode!=='strict'&&foldName(p.name)===foldName(old.name)?{...p,deleted:true,locked:true,manual:true,versionId}:p)},bound);
   });await mirrorAfterEdit();}
+  async function deleteProfiles(requests,{checkRelated=()=>{},commitRelated=async()=>{}}={}){
+    check();const bound=currentWorkspace;
+    const fail=(reason,cause)=>Object.assign(cause instanceof Error?cause:new Error('人物删除未完成'),{code:cause?.code??'OPERATION_FAILED',details:{...cause?.details,action:'deletePerson',reason,stage:reason==='person_delete_partial'?'storage':'validate',modelRequested:false}});
+    const validate=()=>{
+      check(bound);if(job)throw fail('person_delete_busy');
+      if(!Array.isArray(requests)||!requests.length||new Set(requests.map(r=>r?.id)).size!==requests.length)throw fail('person_delete_missing');
+      const visible=publicData().profiles;
+      for(const row of requests){const profile=visible.find(p=>p.id===row?.id&&!p.deleted);if(!profile||sha256(profile)!==row.expected)throw fail('person_delete_stale');}
+      checkRelated();
+    };
+    await transact(async()=>{
+      validate();const ids=new Set(requests.map(r=>r.id)),versionId=makeId('persona-version');
+      // One recoverable snapshot and one profile write for the whole selection.
+      // Validate every selected dossier before committing any related memory.
+      await bound.write(versionId,{profiles:data.profiles});validate();
+      await commitRelated();check(bound);
+      try{await save({...data,profiles:data.profiles.map(p=>ids.has(p.id)?{...p,deleted:true,locked:true,manual:true,versionId}:p)},bound);}
+      catch(error){throw fail('person_delete_partial',error);}
+    });await mirrorAfterEdit();
+  }
   async function setPartHistorical(id,key,historical){
     check();const bound=currentWorkspace;await transact(async()=>{
       check(bound);const profile=data.profiles.find(p=>p.id===id&&!p.deleted),part=profile?.composition?.parts?.find(p=>p.key===key);
@@ -1207,5 +1240,5 @@ export function createDynamicPersona({settings,getWorkspace,readRange,historyTai
     view={...view,lastInjection:{at:now(),people:selected.map(p=>p.name),replaced:used.size,supplemental:extras.length,coverage:{replacedEntries:finalized?.replacedEntries??0,replacedFragments:finalized?.replacedFragments??0,restoredFragments:finalized?.restoredFragments??0,replacedCardFields:finalized?.replacedCardFields??0,rejectedProfiles:rejected.size,owned:audit.filter(a=>a.status==='owned').length,shared:audit.filter(a=>a.status==='shared').length,unresolved:audit.filter(a=>['unresolved','unsupported'].includes(a.status)).length},profiles:selected.map(recallProfile),text:selected.map(p=>`${p.name}：\n${p.text}`).join('\n\n')}};emit();
     return clone(view.lastInjection);
   }
-  return {load,clear,inspect,inspectWorldbook,previewManual,createManual,resumeManual,resumeManualBatch,splitManualBatch,previewApplyManualPrefix,applyManualPrefix,pauseManual,discardManual,wake,process,stop,pause,resume,setStart,edit,setCasting,setPartHistorical,bind,merge,undo,add,profiles,inject,syncMirror,previewDeleteBatch,deletePersonaBatch,restorePersonaBatch,draftDirectives,previewReview,startReview,manageReview,applyReview,reviewMarkdown:()=>personaRefinementMarkdown(data.refinement),interruptReview:()=>Promise.all([refinement.interrupt(),factualReview.interrupt()]),interruptFactReview:()=>factualReview.interrupt(),retryReview:()=>refinement.retry(),processReview:()=>refinement.process(),processFactReview:()=>factualReview.process(),export:()=>clone(data),async dispose(){disposed=true;refinement.dispose();await factualReview.dispose();stop({preserveManual:true});if(job)job.abort();},get state(){return {...clone(publicData()),...view,busy:Boolean(job),lastIndex,plan:plan()};}};
+  return {load,reconcileSaved,clear,inspect,inspectWorldbook,previewManual,createManual,resumeManual,resumeManualBatch,splitManualBatch,previewApplyManualPrefix,applyManualPrefix,pauseManual,discardManual,wake,process,stop,pause,resume,setStart,edit,deleteProfiles,setCasting,setPartHistorical,bind,merge,undo,add,profiles,inject,syncMirror,previewDeleteBatch,deletePersonaBatch,restorePersonaBatch,draftDirectives,previewReview,startReview,manageReview,applyReview,reviewMarkdown:()=>personaRefinementMarkdown(data.refinement),interruptReview:()=>Promise.all([refinement.interrupt(),factualReview.interrupt()]),interruptFactReview:()=>factualReview.interrupt(),retryReview:()=>refinement.retry(),processReview:()=>refinement.process(),processFactReview:()=>factualReview.process(),export:()=>clone(data),async dispose(){disposed=true;refinement.dispose();await factualReview.dispose();stop({preserveManual:true});if(job)job.abort();},get state(){return {...clone(publicData()),...view,busy:Boolean(job),lastIndex,plan:plan()};}};
 }

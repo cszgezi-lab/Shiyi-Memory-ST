@@ -40,7 +40,7 @@ export function peopleGroups(snapshot = {}) {
   const profiles = (snapshot.dynamicPersona?.profiles ?? []).filter(p => !p.deleted);
   const dictionary = snapshot.dictionary ?? { entries: [] };
   const settings = snapshot.settings ?? {};
-  const keepsakes = characterKeepsakes(cards, { withExpected: false });
+  const keepsakes = characterKeepsakes(cards.flatMap(c => c.mergedParts?.length ? c.mergedParts : [c]), { withExpected: false });
   const terms = [...(dictionary.entries ?? []), ...cards.flatMap(c => c.entities ?? [])];
   const nonPeople = new Set(terms.filter(t => ['地点', '组织', '物品'].includes(t?.kind)).map(t => nameKey(t.name)));
   const definitePeople = new Set([
@@ -117,6 +117,7 @@ export function peopleGroups(snapshot = {}) {
     ...group,
     casting:applyPersonaCasting({name:group.name,casting:group.profiles[0]?.casting},snapshot.dynamicPersona?.castingOverrides).casting,
     indexWords:(dictionary.entries??[]).find(e=>nameKey(e.name)===nameKey(group.name))?.indexWords??[],
+    profileSources: group.profiles,
     profiles: currentPersonaProfiles(group.profiles, settings.dynamicPersonaMvuMode),
     fieldCount: new Set(group.facts.map(factKey).filter(k => k != null)).size,
     relationships: newestFirst(group.relationships),
@@ -305,7 +306,7 @@ export function mountPeopleView({ panel, app, run, host, setPage, onSelect }) {
   const $ = selector => root.querySelector?.(selector);
   let scope, stamp = '', rendered = '', renderedPerson='', groups = [], selected = '', editing = '', stripStamp = '', query = '', composing = false, sourceCards = [];
   const origins = row => (row.origins?.length ? row.origins : [row]).map(origin => {
-    const record=sourceCards.find(c=>c.id===origin.recordId);
+    const record=sourceCards.flatMap(c=>c.mergedParts?.length?c.mergedParts:[c]).find(c=>c.id===origin.recordId);
     if(!record)throw new Error('来源记忆已变化，请刷新人物页');
     return {...origin,expected:sha256(record)};
   });
@@ -457,13 +458,17 @@ export function mountPeopleView({ panel, app, run, host, setPage, onSelect }) {
       const group = groups.find(g => g.key === selected);
       if (!group) return;
       void run(async () => {
-        if (await host.confirm?.(`删除“${group.name}”显示的关联记录与动态档案？记忆可从回收站恢复，动态档案保留旧版；心迹和台词仅移除对应字段，不删除整篇共享事件。聊天原文与原世界书不改。`) !== true) return;
         const ids = [...new Set([...group.facts, ...group.relationships, ...group.commitments, ...group.personaChanges].map(r=>r.id))];
         const keepsakes=[...group.diaries,...group.dialogues].flatMap(row=>origins(row).filter(o=>!ids.includes(o.recordId)).map(o=>({...o,kind:row.kind})));
-        if (ids.length || keepsakes.length) await app.deleteRecords(ids,{keepsakes});
-        for(const p of group.profiles)await app.editDynamicPersona(p.id,{deleted:true});
+        // Freeze the original indices and revisions BEFORE awaiting confirmation.
+        // Repainting while the dialog is open must not bless old indices with new hashes.
+        const deletion={scopeKey:scope,records:ids.map(id=>({id,expected:sha256(sourceCards.find(c=>c.id===id))})),keepsakes,
+          profiles:(group.profileSources??group.profiles).map(p=>({id:p.id,expected:sha256(p)}))};
+        if (await host.confirm?.(`删除“${group.name}”显示的关联记录与动态档案？记忆可从回收站恢复，动态档案保留旧版；心迹和台词仅移除对应字段，不删除整篇共享事件。聊天原文与原世界书不改。`) !== true) return {message:'已取消删除，人物记录保留。',level:'info'};
+        const result=await app.deletePerson(deletion);
         stamp='';rendered='';
-      }, { name: 'deleteRecord', button });
+        return result;
+      }, { name: 'deletePerson', button });
       return;
     }
     if (button.dataset.peopleEdit) {

@@ -148,7 +148,7 @@ export function createProductApplication({ host = globalThis, adapter = null, co
   function reportError(error,{task='operation',stage='ui',modelRole,action,level='error'}={}){
     if(error&&typeof error==='object'){if(recordedErrors.has(error))return Promise.resolve();recordedErrors.add(error);}
     const details=safeLogDetails({stage,modelRole,action,...errorDiagnostics(error)});
-    return trackDiagnostic((async()=>{const run=await runtimeLog.start(task);runtimeLog.record({run,task,phase:details.code==='CANCELED'?'canceled':'failed',level,details});await runtimeLog.flush();})());
+    return trackDiagnostic((async()=>{const run=await runtimeLog.start(task,{action:details.action,stage:details.stage});runtimeLog.record({run,task,phase:details.code==='CANCELED'?'canceled':'failed',level,details});await runtimeLog.flush();})());
   }
   const stopTransportDiagnostics=observeProviderRequests(fetchImpl,event=>{
     const id=event.details.requestId;
@@ -1391,18 +1391,69 @@ export function createProductApplication({ host = globalThis, adapter = null, co
   async function deleteRecord(id){
     return deleteRecords([id]);
   }
-  async function deleteRecords(selected,{keepsakes=[]}={}){
-    assertCurrent();if(active)throw new Error('请先停止总结');
+  const personDeleteFailure=(reason,cause)=>Object.assign(cause instanceof Error?cause:new Error('人物删除未完成'),{
+    code:cause?.code??'OPERATION_FAILED',details:{...cause?.details,action:'deletePerson',reason,stage:['person_delete_storage','person_delete_partial'].includes(reason)?'storage':'validate',modelRequested:false}});
+  const keepsakeSourceCard=id=>state.cards.flatMap(c=>c.mergedParts?.length?c.mergedParts:[c]).find(c=>c.id===id);
+  function prepareRecordDeletion(selected,keepsakes,{originalParts=false}={}){
     if(!Array.isArray(selected)||!Array.isArray(keepsakes)||!selected.length&&!keepsakes.length||selected.some(id=>!state.cards.some(c=>c.id===id)))throw new Error('记忆不存在');
     const ids=[...new Set(selected.flatMap(id=>state.cards.find(c=>c.id===id).mergedIds??[id]))];
     const edits={},seen=new Set();
     for(const row of [...keepsakes].sort((a,b)=>(b.index??0)-(a.index??0))){
-      const record=state.cards.find(c=>c.id===row?.recordId),key=JSON.stringify([row?.kind,row?.recordId,row?.index]);
+      const record=originalParts?keepsakeSourceCard(row?.recordId):state.cards.find(c=>c.id===row?.recordId),key=JSON.stringify([row?.kind,row?.recordId,row?.index]);
       if(!record||sha256(record)!==row.expected)throw new Error('原记录已变化，请刷新人物页后重试');
       if(record.mergedIds?.length)throw new Error('请先撤销事件合并，再移除其中的台词或心迹');
       if(seen.has(key)||ids.includes(record.id))continue;seen.add(key);
       edits[record.id]={...edits[record.id],...editKeepsakePatch({...record,...edits[record.id]},{...row,remove:true})};
     }
+    return {ids,edits};
+  }
+  async function deletePerson(input){
+    assertCurrent();
+    if(state.stale)throw personDeleteFailure('person_delete_stale');
+    if(active||personaLaunch||dynamicPersona.state.busy||retrospectiveOperation)throw personDeleteFailure('person_delete_busy');
+    if(!input||!Array.isArray(input.records)||!Array.isArray(input.keepsakes)||!Array.isArray(input.profiles)||!input.records.length&&!input.keepsakes.length&&!input.profiles.length)throw personDeleteFailure('person_delete_missing');
+    const token=epoch;
+    return reservePersonaCommand(async()=>{
+      const op=begin();let memoryAttempted=false;
+      const prepare=()=>{
+        op.check();if(input.scopeKey!==JSON.stringify(core.state.scope))throw personDeleteFailure('person_delete_stale');
+        for(const row of input.records){const card=state.cards.find(c=>c.id===row?.id);if(!card||sha256(card)!==row.expected)throw personDeleteFailure('person_delete_stale');}
+        if(!input.records.length&&!input.keepsakes.length)return {ids:[],edits:{}};
+        try{return prepareRecordDeletion(input.records.map(r=>r.id),input.keepsakes,{originalParts:true});}
+        catch(error){throw personDeleteFailure('person_delete_stale',error);}
+      };
+      const commitRelated=async()=>{
+        const prepared=prepare();if(!prepared.ids.length&&!Object.keys(prepared.edits).length)return;
+        const view=await core.readMemoryView();op.check();const checked=prepare();
+        for(const id of Object.keys(checked.edits))checked.edits[id]={...view.controls?.edits?.[id],...checked.edits[id]};
+        memoryAttempted=true;
+        await core.updateMemoryControls({deletedRecords:Object.fromEntries(checked.ids.map(id=>[id,true])),edits:checked.edits});op.check();
+      };
+      try{
+        assertCurrent(token);prepare();
+        if(input.profiles.length)await dynamicPersona.deleteProfiles(input.profiles,{checkRelated:prepare,commitRelated});
+        else await commitRelated();
+        op.check();await refresh();op.check();
+        const message='人物关联记忆已移入回收站，动态档案保留旧版；共享事件、其他人物台词和聊天原文保留。';
+        setMessage(message);return {message,level:'success'};
+      }catch(error){
+        if(memoryAttempted||error?.details?.reason==='person_delete_partial'){
+          // A storage readback can fail after a real write. Reconcile this chat's
+          // actual saved state; if it cannot be read, do not keep injecting a stale view.
+          if(epoch===token&&op.workspace.isCurrent()){
+            try{op.check();if(input.profiles.length)await dynamicPersona.reconcileSaved();op.check();await refresh();op.check();}
+            catch{if(epoch===token&&op.workspace.isCurrent()){state.stale=true;recallChanged({clear:true});notify();}}
+          }
+          throw personDeleteFailure('person_delete_partial',error);
+        }
+        if(error?.code==='PERSISTENCE_ERROR')throw personDeleteFailure('person_delete_storage',error);
+        throw error;
+      }finally{op.finish();}
+    });
+  }
+  async function deleteRecords(selected,{keepsakes=[]}={}){
+    assertCurrent();if(active)throw new Error('请先停止总结');
+    const {ids,edits}=prepareRecordDeletion(selected,keepsakes);
     const op=begin();
     try{const view=await core.readMemoryView();op.check();for(const id of Object.keys(edits))edits[id]={...view.controls?.edits?.[id],...edits[id]};await core.updateMemoryControls({deletedRecords:Object.fromEntries(ids.map(key=>[key,true])),edits});op.check();}
     finally{op.finish();}
@@ -1465,7 +1516,7 @@ export function createProductApplication({ host = globalThis, adapter = null, co
     if(!input||typeof input!=='object'||input.origins!==undefined&&(!Array.isArray(input.origins)||!input.origins.length||input.origins.length>10000))throw new Error('角色记录的编辑来源无效，请重新打开');
     const edits={},rows=input.origins?.length?input.origins:[input];
     for(const row of [...rows].sort((a,b)=>(b.index??0)-(a.index??0))){
-      const record=state.cards.find(c=>c.id===row.recordId);
+      const record=keepsakeSourceCard(row.recordId);
       if(!record||sha256(record)!==row.expected)throw new Error('原记录已变化，请重新打开后修改');
       if(record.mergedIds?.length)throw new Error('请先在事件合并中撤销合并，再修改原记录的台词');
       edits[record.id]={...edits[record.id],...editKeepsakePatch({...record,...edits[record.id]},{...input,index:row.index})};
@@ -2092,6 +2143,7 @@ export function createProductApplication({ host = globalThis, adapter = null, co
     async exportBackup(options={}){assertCurrent();const assistantLimit=Number.isFinite(options.assistantLimit)?Math.max(0,Math.floor(options.assistantLimit)):null;const assistant=assistantLimit==null?state.history:state.history.slice(-assistantLimit);return {kind:'shiyi-backup',version:1,scope:boundScope,modules:clone(state.modules),moduleSnapshots:clone(state.moduleSnapshots),eventMergeDecisions:clone(mergeDecisions),settings:persistedProductSettings(core.settings),memory:await core.readMemoryView(),documents:await Promise.all(state.documents.map(async d=>({...d,parts:await Promise.all(Array.from({length:d.chunks},(_,i)=>globalWorkspace.read(documentPartKey(d,i))))}))),assistant};},
     async dispose(){disposed=true;host.document?.removeEventListener?.('visibilitychange',resumeAutomaticTasks);host.removeEventListener?.('online',resumeAutomaticTasks);await dynamicPersona.dispose();host.document?.removeEventListener?.('visibilitychange',resumeVectorMaintenance);host.removeEventListener?.('online',resumeVectorMaintenance);host.removeEventListener?.('offline',resumeVectorMaintenance);tracking=false;clearTimeout(followTimer);followTimer=null;followPending=false;for(const off of [...chatListeners.splice(0),...generationListeners.splice(0)]){try{await off();}catch{}}await disable();await injectionLog?.flush();epoch++;await core.dispose();stopRequestScheduler();stopTransportDiagnostics();stopErrorBoundary();for(const resolve of followWaiters.splice(0))resolve(publicState());await flushDiagnostics();},
   };
+  application.deletePerson=deletePerson;
   const exportRawBackup=application.exportBackup;
   application.exportBackup=async()=>{const token=epoch,backup=await exportRawBackup();assertCurrent(token);return {...backup,dynamicPersona:dynamicPersona.export(),qualityReview:clone(qualitySaved),memoryRetrospective:clone(retrospectiveSaved),effectiveRecords:clone(state.records)};};
   // One failure boundary for all public actions, including manual edits, DIY,

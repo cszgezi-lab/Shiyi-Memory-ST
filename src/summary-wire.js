@@ -13,6 +13,7 @@ const categories = { knowledge: 'awarenessChanges', facts: 'entityFactChanges', 
 export function moduleSummaryContract(legacy) {
   return {
     format:MODULE_SUMMARY_FORMAT,
+    ...(legacy.crossModuleQualityRules!==undefined?{crossModuleQualityRules:legacy.crossModuleQualityRules}:{}),
     analysisBoundaryRules:SUMMARY_FACTUAL_RULE,
     sceneTimeRules:legacy.sceneTimeRule,
     dialogueSourceRules:'keyDialogues 中每句可附 sourceRefs:[{sourceId,fragmentId?}]，定位实际说出这句话的原文楼层；跨楼关系的来源不能代替台词自己的来源。不把重复出现的原话认作仅在最后一楼说过。',
@@ -104,6 +105,13 @@ function normalizeWholeSourceRef(ref,sourceMessages,{confirmedWholeEvent=false,c
   const matches=sourceMessages.filter(m=>m.id===ref.sourceId);
   if(matches.length!==1||matches[0].fragmentId!=null)return ref;
   const hint=ref.fragmentId,text=matches[0].text;
+  // A canonical host ID already contains this same whole source's body
+  // digest. Some models redundantly copy it into fragmentId. Resolve only
+  // that exact duplicate within one frozen whole source, never a new ID.
+  const canonical=/^message:(0|[1-9]\d*):([a-f0-9]{16})$/.exec(ref.sourceId);
+  const frozenHash=matches[0].hash??matches[0].contentHash;
+  const digest=frozenHash==null?(typeof text==='string'?sha256(text):null):typeof frozenHash==='string'&&/^[a-f0-9]{64}$/.test(frozenHash)?frozenHash:null;
+  const redundantDigest=canonical&&digest&&Number(canonical[1])===matches[0].index&&canonical[2]===digest.slice(0,16)&&hint===canonical[2];
   // Some providers put a literal quote/heading in the optional fragment slot.
   // Resolve only a unique exact passage INSIDE the explicitly named whole
   // floor. Never search other floors, guess a real fragment, or erase a wrong
@@ -120,7 +128,7 @@ function normalizeWholeSourceRef(ref,sourceMessages,{confirmedWholeEvent=false,c
   // epistemic status or source ID, and hash/version checks still run later.
   const annotatedRecord=confirmedWholeRecord&&typeof hint==='string'&&/[\u3400-\u9fff]/u.test(hint);
   const eventAnnotation=(confirmedWholeEvent||annotatedRecord)&&typeof hint==='string'&&hint.trim()===hint&&hint.length>=2&&hint.length<=80;
-  if(hint!==null&&hint!==''&&!literal&&!eventAnnotation)return ref;
+  if(hint!==null&&hint!==''&&!literal&&!eventAnnotation&&!redundantDigest)return ref;
   const normalized={...ref};delete normalized.fragmentId;return normalized;
 }
 
@@ -197,8 +205,9 @@ export function normalizedModuleSourceRefs(output,expanded) {
   if(!isModuleSummaryWire(output))return 0;
   return ['events','summaryView',...Object.values(categories)].reduce((n,k)=>n+(Array.isArray(output[k])?output[k]:[]).reduce((sum,r,i)=>{
     const refs=expanded[k]?.[i]?.sourceRefs;
-    const direct=r?.sourceId&&r.fragmentId===''&&refs?.length===1&&refs[0].fragmentId===undefined?1:0;
-    return sum+direct+(Array.isArray(r?.sourceRefs)?r.sourceRefs:[]).filter((ref,j)=>(ref?.fragmentId===null||ref?.fragmentId==='')&&Array.isArray(refs)&&refs[j]?.fragmentId===undefined).length;
+    const digestHint=ref=>typeof ref?.sourceId==='string'&&/^message:(0|[1-9]\d*):[a-f0-9]{16}$/.test(ref.sourceId)&&ref.fragmentId===ref.sourceId.split(':').at(-1);
+    const direct=r?.sourceId&&(r.fragmentId===''||digestHint(r))&&refs?.length===1&&refs[0].fragmentId===undefined?1:0;
+    return sum+direct+(Array.isArray(r?.sourceRefs)?r.sourceRefs:[]).filter((ref,j)=>(ref?.fragmentId===null||ref?.fragmentId===''||digestHint(ref))&&Array.isArray(refs)&&refs[j]?.fragmentId===undefined).length;
   },0),0);
 }
 
@@ -210,6 +219,7 @@ export function moduleLinkNormalization(output,expanded,sourceMessages=[]){
     return sum+(Array.isArray(before)?before:[]).filter((ref,j)=>{
       if(!(typeof ref?.fragmentId==='string'&&ref.fragmentId.length>0&&expanded[k]?.[i]?.sourceRefs?.[j]?.sourceId===ref.sourceId&&expanded[k][i].sourceRefs[j].fragmentId===undefined))return false;
       const text=sourceMessages.find(m=>m.id===ref.sourceId)?.text,hint=ref.fragmentId;
+      if(/^message:(0|[1-9]\d*):[a-f0-9]{16}$/.test(ref.sourceId)&&hint===ref.sourceId.split(':').at(-1))return false;
       if(k!=='summaryView'&&sourceMessages.length&&!(typeof text==='string'&&text.indexOf(hint)>=0&&text.indexOf(hint)===text.lastIndexOf(hint))){if(k==='events')wholeFloorEventAnnotations++;else wholeFloorRecordAnnotations++;return false;}
       return true;
     }).length;

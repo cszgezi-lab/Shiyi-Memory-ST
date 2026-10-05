@@ -3,7 +3,7 @@ import { estimateUnits, clone, stableStringify } from './utils.js';
 import { buildDictionary, dictionaryQuery,enrichRetrievalMetadata } from './product-dictionary.js';
 import { fullSearchText, narrativeText, recordTitle, sourceFloors, sourceLabel, stateLabel, awarenessLabel, viaLabel, relationLabel, epistemicLabel, fieldLabel,scopeLabel } from './product-narrative.js';
 import { hasStoryTime, storyDateOf } from './temporal.js';
-import { coveredRecallRecord, recallSelectionReason, nameOnlyRecallCandidates, coverLocalQuestionParts, recallActorFilter } from './product-recall-packing.js';
+import { coveredRecallRecord, recallSelectionReason, nameOnlyRecallCandidates, coverLocalQuestionParts, recallActorFilter, recallRelationshipScope } from './product-recall-packing.js';
 import { factValue, factImportance, fullCharacterGroups, currentAttributeRecords, awarenessSubjectLabel, characterRecordSubjects, explicitSubjectNames, PERSON_RECORD_CATEGORIES, factKey } from './product-person-profiles.js';
 import {foldName} from './persona-identity.js';
 import {markMemoryStates,memoryHistoryIntent} from './memory-current-state.js';
@@ -824,9 +824,18 @@ export async function recallMemory(cards, query, settings, { vectorAdapter = nul
     ? c=>(c.category==='knowledge'?'knowledge':'memory')===settings.distributedChannel : undefined;
   const factAsked=record=>[record.field,record.fieldLabel,typeof record.to==='string'?record.to:''].filter(item=>typeof item==='string'&&item.trim().length>=2).some(item=>String(focusQuery).includes(item));
   const attitudeBlob=record=>[record.description,record.recallSummary,record.title,record.aspect,record.context,record.scope,record.innerLife?.text,record.innerLife?.stage,...(record.keyDialogues??[]).flatMap(quote=>[quote.text,quote.context,quote.meaning])].filter(item=>typeof item==='string').join('\n');
+  const relationshipScope=recallRelationshipScope(selected,lexicon,focusQuery);
+  const directQuestion=/[?？]|谁|什么|怎么|哪里|哪儿|何时|是否|吗|多久|几个|多少|如何|为何|为什么/u.test(focusQuery);
+  // Existing relationship concepts define the requested lane. Merely naming
+  // two people in a time/place/action question is not relationship intent.
+  const scopedPairQuestion=directQuestion&&/关系|态度|相处/u.test(focusQuery)&&!matched.terms.some(term=>lexicon.entries.some(e=>e.name===term.name&&['地点','组织','物品'].includes(e.kind)));
   const attitudeAsked=record=>{
     if(!['relationshipChanges','personaChanges','performanceHints'].includes(record.category))return true;
     if(historyIntent)return true;
+    // A relationship question naming both endpoints has identity evidence even
+    // when its wording is absent from the saved prose. Keep ordinary relevance
+    // and budgets downstream; bare names and objective questions are excluded.
+    if(record.category==='relationshipChanges'&&scopedPairQuestion&&relationshipScope.explicitPair(record))return true;
     const names=new Set(tokenizeChinese([record.from,record.to,record.subject,record.object,record.entity].filter(Boolean).join(' ')));
     const topics=tokenizeChinese(focusQuery).filter(token=>token.length>1&&!names.has(token)&&!/^(什么|怎么|为什么|怎样|如何|现在|继续|然后|一下|来了|说了|说话)$/.test(token));
     if(!topics.length)return false;
@@ -1054,6 +1063,10 @@ export async function recallMemory(cards, query, settings, { vectorAdapter = nul
   let excerpts=0;
   const budget = settings.retrievalBudgetUnits;
   const nameOnly=nameOnlyRecallCandidates(candidates,ordinaryQuery,lexicon,result.trace.rerank.status==='passed'?(result.trace.rerank.scores??[]).map(s=>s.id):[],selected,focusQuery);
+  // Explicitly named endpoints establish the subject of a direct question.
+  // Do not require the saved relationship to repeat interrogative words; this
+  // exemption is scoped to that pair and still uses normal ranking/budgets.
+  if(scopedPairQuestion)for(const candidate of candidates)if(candidate.record.category==='relationshipChanges'&&relationshipScope.explicitPair(candidate.record))nameOnly.delete(candidate.id);
   for(const id of sourceFloorPromotedIds)nameOnly.delete(id);
   // A retrieved open agreement carries its encounter when exact source
   // revisions and substantive content identify one event. This applies to any

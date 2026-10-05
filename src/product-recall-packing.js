@@ -1,5 +1,5 @@
 import { stableStringify } from './utils.js';
-import { sameFactForRecall } from './product-person-profiles.js';
+import { sameFactForRecall, explicitSubjectNames } from './product-person-profiles.js';
 import { tokenizeChinese } from './retrieval.js';
 import { dictionaryQuery } from './product-dictionary.js';
 import { foldName } from './persona-identity.js';
@@ -92,7 +92,34 @@ export function sceneClockForRequest(messages=[],sceneMessages=[],query=sceneRec
 // An actor shared by most events is not sufficient to connect two otherwise
 // separate companions' experiences. Frequency only narrows retrieval here;
 // it never assigns a character's identity, importance or knowledge.
+export function recallRelationshipScope(records,dictionary,query){
+  const people=(dictionary.entries??[]).filter(e=>!e.disabled&&e.kind==='人物');
+  const named=new Set(people.flatMap(p=>[p.name,...(p.aliases??[])]).map(foldName));
+  for(const record of records.filter(r=>r.category==='relationshipChanges'))for(const name of [record.from??record.subject,record.to??record.object].flatMap(explicitSubjectNames)){
+    if(!name||/^(我|你|他|她|它|我们|你们|他们|她们)$/u.test(name)||named.has(foldName(name)))continue;
+    const blocked=(dictionary.entries??[]).some(e=>e.disabled&&[e.name,...(e.aliases??[])].some(n=>foldName(n)===foldName(name)));
+    if(!blocked){people.push({name,kind:'人物',aliases:[],ambiguous:[]});named.add(foldName(name));}
+  }
+  const owners=new Map();
+  for(const person of people)for(const name of [person.name,...(person.aliases??[])]){
+    const key=foldName(name);if((person.ambiguous??[]).some(a=>foldName(a)===key))continue;
+    const set=owners.get(key)??new Set();set.add(foldName(person.name));owners.set(key,set);
+  }
+  const canonical=name=>{const key=foldName(name),set=owners.get(key);return set?.size===1?[...set][0]:null;};
+  const mentioned=new Set(dictionaryQuery(query,{...dictionary,entries:people},{expandTopics:false,entityLimit:Infinity}).entities.map(canonical).filter(Boolean));
+  const endpoints=record=>[...new Set([record.from??record.subject,record.to??record.object].flatMap(explicitSubjectNames).map(canonical).filter(Boolean))];
+  return {
+    matches(record){
+      if(record.category!=='relationshipChanges'||!mentioned.size)return true;
+      const names=endpoints(record);if(!names.length)return true;
+      return mentioned.size>=2&&names.length>=2?names.every(name=>mentioned.has(name)):names.some(name=>mentioned.has(name));
+    },
+    explicitPair(record){const names=endpoints(record);return mentioned.size>=2&&names.length>=2&&names.every(name=>mentioned.has(name));},
+  };
+}
+
 export function recallActorFilter(records,dictionary,query){
+  const relationships=recallRelationshipScope(records,dictionary,query);
   const people=(dictionary.entries??[]).filter(e=>!e.disabled&&e.kind==='人物');
   for(const name of new Set(records.filter(r=>r.category==='events').flatMap(r=>r.participants??[])))
     if(typeof name==='string'&&name.length>1&&![...(dictionary.entries??[]),...people].some(e=>e.name===name||(e.aliases??[]).includes(name)))people.push({name,kind:'人物',aliases:[]});
@@ -110,6 +137,7 @@ export function recallActorFilter(records,dictionary,query){
   const terms=[...new Set(tokenizeChinese(topic).filter(t=>t.length>=2))];
   const rare=terms.filter(t=>events.filter(e=>String(e.title??'').includes(t)).length===1);
   const evaluate=record=>{
+    if(record.category==='relationshipChanges')return relationships.matches(record);
     if(!focus.size||!['events','summaryView'].includes(record.category))return true;
     const actors=(record.participants??[]).map(canonical).filter(Boolean);
     if(!actors.length||actors.some(n=>focus.has(n)))return true;

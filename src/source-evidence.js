@@ -3,7 +3,7 @@ import {sha256} from './utils.js';
 // Local source slices, not a new memory database. IDs bind exact offsets and
 // text; the model selects IDs instead of retyping prose. Keep time headers and
 // narrative HTML. Never offer reasoning, executable styling or variable edits.
-export function qualitySourceSegments(source,{includeStructural=false}={}){
+export function safeSourceRanges(source){
   const text=String(source.text??''),excluded=[];
   // An inline-code example such as `<think>` is not a real opening marker.
   // Preserve offsets while ignoring examples during control-tag recognition;
@@ -18,6 +18,11 @@ export function qualitySourceSegments(source,{includeStructural=false}={}){
   for(const m of controlText.matchAll(/<\/(think|thinking|analysis|konatan_planning~|UpdateVariable|JSONPatch|script|style)\s*>/gi))if(!excluded.some(([a,b])=>m.index>=a&&m.index<b))excluded.push([0,m.index+m[0].length]);
   excluded.sort((a,b)=>a[0]-b[0]);const ranges=[];let cursor=0;
   for(const [a,b]of excluded){if(a>cursor)ranges.push([cursor,a]);cursor=Math.max(cursor,b);}if(cursor<text.length)ranges.push([cursor,text.length]);
+  return ranges;
+}
+
+export function qualitySourceSegments(source,{includeStructural=false}={}){
+  const text=String(source.text??''),ranges=safeSourceRanges(source);
   const prefix=sha256([source.id,text]).slice(0,8),segments=[];
   for(const [a,b]of ranges)for(const m of text.slice(a,b).matchAll(/[^\r\n]+(?:\r?\n|$)/g)){
     const value=m[0];if(!value.replace(/<[^>]*>/g,'').trim()&&!(includeStructural&&/^\s*(?:<\/?(?:sy_context|sy_private|time_format)\b[^>]*>\s*)+$/i.test(value)))continue;

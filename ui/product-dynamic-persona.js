@@ -1,7 +1,7 @@
 import {esc,field,setting} from '../src/product-settings-ui.js';
 import {DYNAMIC_PERSONA_PROMPT,currentPersonaProfiles} from '../src/dynamic-persona.js';
 import {PERSONA_SOURCE_LABELS,PERSONA_SOURCE_REASONS} from '../src/persona-source-index.js';
-import {PERSONA_STEPS,DIAGNOSTIC_REASONS} from '../src/diagnostics.js';
+import {failureText} from '../src/product-feedback.js';
 import {markPersonaQuoteParts} from '../src/persona-edit-evidence.js';
 export function personaSourceDetails(p,guide,sources){
   const bindings=[...new Map((p.bindings??[]).map(b=>[JSON.stringify([b.book,b.uid]),{book:b.book,title:b.originalName??b.name}])).values()];
@@ -22,6 +22,10 @@ export function dynamicPersonaProgressText(d){
   if(!d.plan)return '独立进度尚未读取';
   const p=d.plan;
   return `${p.coveredThrough>=p.startFloor?`连续已处理 ${p.startFloor}–${p.coveredThrough} 楼`:'起点后尚未处理'} · 下一批 ${p.nextStart}–${p.nextEnd} 楼 · 最新 ${d.lastIndex??'未读取'} 楼 · 保留 ${p.keepRecent} 楼。${p.pendingBatches===null?'点击检查进度读取待处理数量。':`当前 ${p.pendingBatches} 个完整待处理批次，正常每批 1 次人设请求。`}旧聊天不继承主总结进度；从 1 开始会分批补读原文。修改起算楼层会跳过更早原文，不代表已建立那些楼层的人设。`;
+}
+export function dynamicPersonaFailureText(d){
+  const f=d.failureDetails;
+  return f?[failureText({code:f.code,details:f}),f.modelRequested===false?'本次尚未请求模型':f.modelRequested?'本次已请求模型':null,d.failureStorage?'失败进度另未保存；原有档案仍保留':null].filter(Boolean).join(' · '):'';
 }
 export function dynamicPersonaHTML(){return `<section data-view="dynamic-persona" hidden>
 <div class="sy-top"><h3>人设更新设置</h3></div>
@@ -83,7 +87,7 @@ export function mountDynamicPersona({panel,app,run,host=globalThis}){
     if(scope!==nextScope){scope=nextScope;stamp=manualStamp='';startDirty=promptDirty=manualDirty=false;profilePage=manualPage=0;drafts.clear();$('[data-persona-profiles]').replaceChildren();$('[data-persona-manual-start]').value=1;$('[data-persona-manual-end]').value='';$('[data-persona-manual-size]').value=20;$('[data-persona-manual-handoff]').checked=true;}
     $('[data-persona-status]').textContent=`${s.settings.dynamicPersonaEnabled?'已启用':'未启用'} · ${d.message??'打开聊天后读取档案'}`;
     $('[data-persona-failure]').hidden=!d.failureDetails;
-    if(d.failureDetails){const f=d.failureDetails;$('[data-persona-failure-text]').textContent=[PERSONA_STEPS[f.personaStep],f.code,DIAGNOSTIC_REASONS[f.reason],f.errorType,f.modelRequested===false?'本次尚未请求模型':f.modelRequested?'本次已请求模型':null,...(f.stackFrames??[]),d.failureStorage?'失败进度另未保存；原始错误仍保留':null].filter(Boolean).join(' · ');}
+    if(d.failureDetails)$('[data-persona-failure-text]').textContent=dynamicPersonaFailureText(d);
     if(!startDirty)$('[data-persona-start]').value=d.startFloor??1;if(!promptDirty)$('[data-persona-prompt]').value=s.settings.dynamicPersonaPrompt||DYNAMIC_PERSONA_PROMPT;
     if(!manualDirty&&d.lastIndex!==null&&d.lastIndex!==undefined)$('[data-persona-manual-end]').value=d.lastIndex;
     const manual=d.manualPlan,items=manual?.items??[],saved=items.filter(b=>b.status==='saved').length,unfinished=['paused','running','failed'].includes(manual?.status);

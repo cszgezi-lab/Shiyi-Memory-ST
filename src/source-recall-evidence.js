@@ -1,5 +1,5 @@
 import { sha256 } from './utils.js';
-import {narrativeReading} from './narrative-reading.js';
+import {narrativeReading,narrativeReadingText} from './narrative-reading.js';
 
 const readingCache=new WeakMap(),projectionCache=new WeakMap();
 
@@ -30,7 +30,7 @@ export function originalSourceText(record) {
   if(prior?.config===config&&prior.raw===original.text)return prior.text;
   // Rendering/search use a projection. Frozen raw text/hash stay untouched,
   // including for old records saved before configurable reading existed.
-  const text=narrativeReading({text:original.text},config).chunks.map(c=>c.text).join('\n');
+  const text=narrativeReadingText(narrativeReading({text:original.text},config));
   readingCache.set(original,{config,raw:original.text,text});return text;
 }
 

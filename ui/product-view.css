@@ -1,4 +1,4 @@
-﻿#shiyi-product-shell{--sy-accent:#86b3a5;--sy-border:color-mix(in srgb,currentColor 18%,transparent);font:inherit;color:inherit;width:100%;min-width:0;line-height:1.6}
+#shiyi-product-shell{--sy-accent:#86b3a5;--sy-border:color-mix(in srgb,currentColor 18%,transparent);font:inherit;color:inherit;width:100%;min-width:0;line-height:1.6}
 #shiyi-product-shell *{box-sizing:border-box;min-width:0}
 #shiyi-product-shell .sy-shell{border:1px solid var(--sy-border);border-radius:16px;overflow:clip;background:color-mix(in srgb,var(--SmartThemeBlurTintColor,#20252e) 95%,transparent)}
 #shiyi-product-shell .sy-brand{display:flex;align-items:center;gap:12px;padding:16px;cursor:pointer;list-style:none;font-size:20px;font-weight:700}
@@ -480,3 +480,23 @@
 #shiyi-product-shell [data-view="extraction"] .sy-empty{opacity:.75}
 #shiyi-product-shell [data-view="extraction"] :is(input,textarea)::placeholder{color:inherit;opacity:.65}
 
+
+/* User-supplied regexes: two plain fields, transparent examples, one preview. */
+#shiyi-product-shell .sy-extraction-editor{padding:4px 0;background:transparent}
+#shiyi-product-shell .sy-regex-example{background:transparent;color:var(--SmartThemeBodyColor,#fff);font-size:13px;line-height:1.6;overflow-wrap:anywhere;margin:6px 0 14px}
+#shiyi-product-shell .sy-regex-example code{background:transparent;color:inherit;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;border:0;box-shadow:none;text-decoration:none;padding:0}
+#shiyi-product-shell .sy-regex-example small{display:block;font:inherit;margin-top:4px}
+#shiyi-product-shell [data-view="extraction"] textarea[data-extraction-expression]{font-family:monospace}
+#shiyi-product-shell [data-extraction-preview-panel]{margin-top:12px;padding-top:8px}
+#shiyi-product-shell [data-extraction-preview-panel]>summary{min-height:44px}
+#shiyi-product-shell [data-extraction-preview-panel] .sy-actions>.sy-field{flex:1 1 140px}
+#shiyi-product-shell [data-extraction-error]{opacity:1}
+
+/* Label management keeps one editable regex; the saved list is plain text. */
+#shiyi-product-shell .sy-extraction-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--sy-border)}
+#shiyi-product-shell .sy-extraction-rule-copy strong{display:block;font-size:12px}
+#shiyi-product-shell .sy-extraction-rule-copy span{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#shiyi-product-shell .sy-extraction-item .sy-actions{margin:0;gap:6px}
+#shiyi-product-shell .sy-extraction-item button{min-height:44px;padding:6px 9px;font-size:13px}
+#shiyi-product-shell [data-extraction-editor]{margin-top:12px;padding-top:12px;border-top:1px solid var(--sy-border)}
+#shiyi-product-shell [data-extraction-kind]{max-width:160px}

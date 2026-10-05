@@ -303,7 +303,7 @@ export function mountPeopleView({ panel, app, run, host, setPage, onSelect }) {
   const root = panel.querySelector?.('[data-view="people"]');
   if (!root) return { paint(){}, focus(){}, select(){} };
   const $ = selector => root.querySelector?.(selector);
-  let scope, stamp = '', rendered = '', renderedPerson='', groups = [], selected = '', editing = '', stripStamp = '', query = '', sourceCards = [];
+  let scope, stamp = '', rendered = '', renderedPerson='', groups = [], selected = '', editing = '', stripStamp = '', query = '', composing = false, sourceCards = [];
   const origins = row => (row.origins?.length ? row.origins : [row]).map(origin => {
     const record=sourceCards.find(c=>c.id===origin.recordId);
     if(!record)throw new Error('来源记忆已变化，请刷新人物页');
@@ -314,21 +314,27 @@ export function mountPeopleView({ panel, app, run, host, setPage, onSelect }) {
     return groups.filter(g => [g.name, ...g.aliases].some(n => nameKey(n).includes(needle)));
   };
   function draw(rebuildStrip = true) {
+    if (composing) return;
     const visible = filter();
     if (!visible.some(g => g.key === selected)) selected = visible[0]?.key ?? '';
     const group = visible.find(g => g.key === selected);
     $('[data-people-count]').textContent = `${groups.length} 位人物`;
     const strip = $('[data-people-strip]');
-    const stripMarkup = `<input type="search" data-people-search placeholder="搜角色" aria-label="查找人物" autocomplete="off" value="${esc(query)}">`
-      + visible.map(g => `<button type="button" role="tab" data-people-key="${esc(g.key)}" aria-pressed="${g.key === selected}" title="${esc(g.name)}">${esc(g.name)}</button>`).join('')
+    const searchMarkup = `<input type="search" data-people-search placeholder="搜角色" aria-label="查找人物" autocomplete="off" value="${esc(query)}">`;
+    const tabsMarkup = visible.map(g => `<button type="button" role="tab" data-people-key="${esc(g.key)}" aria-pressed="${g.key === selected}" title="${esc(g.name)}">${esc(g.name)}</button>`).join('')
       + '<button type="button" data-people-add="person">新角色</button>'
       + (visible.length ? '' : '<small>没有匹配的角色</small>');
+    const stripMarkup = searchMarkup + tabsMarkup;
     if (strip && rebuildStrip && stripStamp !== stripMarkup) {
       const left=strip.scrollLeft??0;
       stripStamp = stripMarkup;
       if (typeof strip.insertAdjacentHTML === 'function' && typeof strip.querySelectorAll === 'function') {
-        for (const node of [...strip.querySelectorAll('input,button,small')]) node.remove();
-        strip.insertAdjacentHTML('beforeend', stripMarkup);
+        // Keep the browser's input node, selection and IME session intact.
+        const search = $('[data-people-search]');
+        if (search) { if (search.value !== query) search.value = query; }
+        else strip.insertAdjacentHTML('afterbegin', searchMarkup);
+        for (const node of [...strip.querySelectorAll('button,small')]) node.remove();
+        strip.insertAdjacentHTML('beforeend', tabsMarkup);
       } else strip.innerHTML = stripMarkup;
       strip.scrollLeft=left;
     }
@@ -364,7 +370,7 @@ export function mountPeopleView({ panel, app, run, host, setPage, onSelect }) {
   function paint(snapshot) {    if (root.hidden) return;
     const nextScope = JSON.stringify(snapshot.scope ?? snapshot.core?.scope ?? app?.core?.state?.scope ?? null);
     if (scope !== nextScope) {
-      scope = nextScope; selected = ''; stamp = ''; rendered = ''; renderedPerson='';editing = ''; stripStamp = ''; query = '';
+      scope = nextScope; selected = ''; stamp = ''; rendered = ''; renderedPerson='';editing = ''; stripStamp = ''; query = ''; composing = false;
     }
     const revision = snapshot.peopleRevision;
     const nextStamp = revision != null ? `revision:${revision}`
@@ -372,7 +378,6 @@ export function mountPeopleView({ panel, app, run, host, setPage, onSelect }) {
     if (stamp === nextStamp) return;
     sourceCards = snapshot.cards ?? []; groups = peopleGroups(snapshot); stamp = nextStamp; draw();
   }
-  $('[data-people-search]')?.addEventListener('input', () => draw());
   /** 第一次点这一行：展开全文。展开之后点这一行的文字：进编辑。 */
   function openFieldEditor(row) {
     const id = row?.dataset.fieldId ?? '';
@@ -392,15 +397,21 @@ export function mountPeopleView({ panel, app, run, host, setPage, onSelect }) {
     if (row.dataset.open !== '1') { row.dataset.open = '1'; open.hidden = false; return; }
     openFieldEditor(row);
   });
-  // 搜索来自横滑名字条里的输入框。重建条带会丢焦点，所以重建后把光标放回输入框。
+  root.addEventListener('compositionstart', event => {
+    if (event.target.closest?.('[data-people-search]')) composing = true;
+  });
+  root.addEventListener('compositionend', event => {
+    if (!event.target.closest?.('[data-people-search]')) return;
+    composing = false;
+    query = String(event.target.value ?? '');
+    draw();
+  });
+  // Filter after IME commits; never replace or refocus the composing input.
   root.addEventListener('input', event => {
     if (!event.target.closest?.('[data-people-search]')) return;
+    if (composing || event.isComposing) return;
     query = String(event.target.value ?? '');
-    rendered = '';
     draw(true);
-    const box = root.querySelector('[data-people-search]');
-    box?.focus?.({ preventScroll: true });
-    if (box && typeof box.setSelectionRange === 'function') box.setSelectionRange(query.length, query.length);
   });
   root.addEventListener('change', event => {
     const select = event.target.closest('[data-people-merge-source-select]');

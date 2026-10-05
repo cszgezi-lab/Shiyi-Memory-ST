@@ -5,7 +5,7 @@ import {safeLogDetails} from './product-runtime-log.js';
 import {errorDiagnostics} from './diagnostics.js';
 import {backgroundRetryDelay} from './provider-scheduler.js';
 import {qualitySourceSegments} from './source-evidence.js';
-import {narrativeReading,NARRATIVE_READING_RULE,narrativeCounters} from './narrative-reading.js';
+import {narrativeReading,narrativeReadingText,assertNarrativeReadingContent,NARRATIVE_READING_RULE,narrativeCounters} from './narrative-reading.js';
 import {personaManualPlan,personaManualPending,personaManualUnfinished} from './dynamic-persona-plan.js';
 import {personaRebuildPlan,personaRebuildIdentities,personaRebuildIdentity,personaRebuildSeed,personaRebuildLiveHash} from './persona-rebuild.js';
 import {personaIdentity,personaAliases,foldName,personaTitleNames} from './persona-identity.js';
@@ -190,10 +190,11 @@ export function personaDossierText(profile){
   if(!blocks.length)blocks.push(String(profile.text??'').trim());
   return blocks.filter(Boolean).join('\n\n');
 }
-const personaSourceMessages=(messages,readingConfig,readings=[])=>messages.map(m=>{if(readingConfig||/<\/?sy_(?:context|private)\b/i.test(m.text??'')){const r=narrativeReading(m,readingConfig);readings.push(r);return {...m,text:r.chunks.map(p=>p.text).join('\n')};}return {...m,text:qualitySourceSegments(m).map(s=>s.text).join('')};});
+const personaSourceMessages=(messages,readingConfig,readings=[])=>messages.map(m=>{if(readingConfig||/<\/?sy_(?:context|private)\b/i.test(m.text??'')){const r=narrativeReading(m,readingConfig);readings.push(r);return {...m,text:narrativeReadingText(r)};}return {...m,text:qualitySourceSegments(m).map(s=>s.text).join('')};});
 export function personaRequest({messages,world,previous,prompt,dictionary,aliases='',stageMode='narrative',records={},readingConfig='',identityProfiles=[],castingOverrides={},materialsThrough=Infinity,inputLimit=12000,arcReferenceVariant='arc-reference',requestViewVersion=3}){
   const readings=[];
   const source=personaSourceMessages(messages,readingConfig,readings);
+  assertNarrativeReadingContent(source,readingConfig);
   const text=source.map(m=>m.text).join('\n');
   const endFloor=Math.max(-1,...source.map(m=>m.index)),frame=personaTimelineFrame(records,endFloor);
   const indexed=personaSourceIndex(world,{previous:[...identityProfiles,...previous],dictionary,aliases,source:text}),identity=indexed.identity;

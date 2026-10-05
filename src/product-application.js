@@ -375,7 +375,7 @@ export function createProductApplication({ host = globalThis, adapter = null, co
   }
   function client(kind = 'summary', patch = {}) {
     const profile = apiProfile(kind,patch);
-    if (!profile.endpoint || !profile.model) throw new Error('请先在 API 中填写地址和模型');
+    if (!profile.endpoint || !profile.model) throw Object.assign(new Error('请先在 API 中填写地址和模型'),{code:'MODEL_UNAVAILABLE',details:{modelRole:kind}});
     return new ProviderClient(profile, { fetchImpl, recordRequests: false,modelRole:kind });
   }
   function apiProfile(kind,patch={}) {

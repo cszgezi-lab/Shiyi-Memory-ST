@@ -3,6 +3,7 @@ import { esc,button,settingsSection } from '../src/product-settings-ui.js';
 import { dictionaryHTML } from './product-management.js';
 import { dictionaryQuery } from '../src/product-dictionary.js';
 import { injectionLogHTML, mountInjectionLog } from './product-injection-log.js';
+import {failureText} from '../src/product-feedback.js';
 
 const tabs=[['recall','概览'],['dictionary','字典'],['vectors','向量'],['retrieval','策略'],['injection','注入'],['current','本轮']];
 export const RECALL_PAGES=tabs.map(([page])=>page);
@@ -29,7 +30,7 @@ export function mountRecallView({panel,app,run,setPage,download,host=globalThis}
       $('[data-vector-entries]').innerHTML=result.rows.map(row=>`<div class="sy-info-row"><span>${({failed:'失败',indexed:'已索引',stale:'待更新',missing:'未索引',excluded:'已排除'})[row.status]}</span><strong>${esc(row.title)}</strong>${row.error?`<small class="sy-vector-error">${esc(row.error)}</small>`:""}${row.segments>1?`<small>${row.segments} 段全文索引</small>`:""}${["failed","missing","stale"].includes(row.status)?`<button type="button" data-vector-retry="${esc(row.id)}">重试此项</button>`:""}<button type="button" data-vector-source="${esc(row.id)}" data-vector-category="${esc(row.category)}">修改原记忆</button><button type="button" data-vector-exclude="${esc(row.id)}" data-excluded="${row.status==='excluded'}">${row.status==='excluded'?'恢复索引':'排除向量'}</button></div>`).join('')||'<p class="sy-help">没有符合条件的记忆。</p>';
       $('[data-vector-page]').textContent=`${result.page} / ${result.pages} · ${result.total} 条`;
       $('[data-vector-prev]').disabled=result.page===1;$('[data-vector-next]').disabled=result.page===result.pages;
-    }catch{if(version===rowVersion)$('[data-vector-entries]').textContent='索引暂不可读，检查配置后刷新。';}
+    }catch(error){void app.reportError?.(error,{stage:'ui'});if(version===rowVersion)$('[data-vector-entries]').textContent=`索引列表暂时无法读取。${failureText(error)} 可稍后点击“刷新状态”重试。`;}
   }
   $('[data-vector-search]')?.addEventListener('input',()=>{rowPage=1;void loadRows();});
   $('[data-vector-filter]')?.addEventListener('change',()=>{rowPage=1;void loadRows();});

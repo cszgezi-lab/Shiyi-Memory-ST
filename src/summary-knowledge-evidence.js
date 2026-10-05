@@ -1,6 +1,6 @@
 import {qualitySourceSegments} from './source-evidence.js';
 import {clone,isPlainObject} from './utils.js';
-import {narrativeReading} from './narrative-reading.js';
+import {narrativeReading,narrativeReadingText} from './narrative-reading.js';
 
 const sourceCache=new WeakMap();
 function partsFor(source){
@@ -22,7 +22,7 @@ export function summaryKnowledgeSources(messages=[],config=''){
     if(config||/<\/?sy_(?:context|private)\b/i.test(message.text??'')){
       const reading=readingFor(message,config??'');
       const knowledgeCues=reading.parts.filter(p=>/sy_private|不知情|不知道|未读|心里|内心|告诉|告知|听见|读完|得知|说[：:]|回答[：:]/.test(p.text)).map(p=>p.part);
-      const view={...message,text:reading.chunks.map(p=>`${p.part?`〔p${p.part}〕`:''}${p.text}`).join('\n'),...(knowledgeCues.length?{knowledgeCues}:{}),...(reading.warnings.length?{readingWarnings:reading.warnings}:{})};
+      const view={...message,text:narrativeReadingText(reading,{partLabels:true}),...(knowledgeCues.length?{knowledgeCues}:{}),...(reading.warnings.length?{readingWarnings:reading.warnings}:{})};
       Object.defineProperty(view,'_reading',{value:{stats:reading.stats}});return view;
     }
     const knowledgeCues=parts.flatMap((p,i)=>/不知情|不知道|尚不知|没.{0,8}(?:看|听|读)|未(?:读|获告知)|不等于|才首次|才知道|才被|心里|内心|闭.{0,8}眼|捂.{0,8}耳|告诉|告知|听见|听清|听完|读完|得知|说[：:]|回答[：:]/.test(p.text)?[i+1]:[]);

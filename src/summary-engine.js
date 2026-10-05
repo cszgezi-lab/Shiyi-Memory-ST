@@ -25,7 +25,7 @@ import { moduleSummaryContract, moduleSummaryInstructions, expandModuleSummary, 
 import { applySummaryPreset, summaryPresetFromRules, PRESET_TRANSPORT_GUARD } from './summary-presets.js';
 import {parseSummaryJson} from './summary-json.js';
 import {summaryKnowledgeSources,SUMMARY_KNOWLEDGE_EVIDENCE_RULE} from './summary-knowledge-evidence.js';
-import {NARRATIVE_READING_RULE,narrativeCounters} from './narrative-reading.js';
+import {NARRATIVE_READING_RULE,narrativeCounters,assertNarrativeReadingContent,isNarrativeRegexConfig} from './narrative-reading.js';
 
 function responseStatus(response) {
   return Number(response?.status ?? response?.statusCode ?? 200);
@@ -142,6 +142,7 @@ function modelEnvelope(request) {
     const {narrativeExtraction,...recordingRules}=value.recordingRules;
     value.recordingRules=recordingRules;
   }
+  assertNarrativeReadingContent(value.sourceMessages??[],request.readingConfig??request.extractionContext?.rules?.narrativeExtraction??request.recordingRules?.narrativeExtraction);
   // Keep the frozen preset locally for checkpoint identity, but transmit its
   // system prompt and writing rules once, not the entire library a second time.
   if(preset||request.extractionContext?.rules?.narrativeExtraction)value.extractionContext={...value.extractionContext,rules:request.extractionContext.rules.recordingRules};
@@ -681,6 +682,10 @@ export class SummaryEngine {
         const model=request.summaryRole==='supplement'?this.supplementModel:this.model;
         Object.assign(baseDetails,{requestId:diagnosticRequestId(),purpose,requestNumber:state.requests+1});
         let providerPayload=typeof model.providerPayload==='function'?model.providerPayload(request):null;
+        if(!providerPayload){
+          const readingConfig=request.readingConfig??request.extractionContext?.rules?.narrativeExtraction??request.recordingRules?.narrativeExtraction;
+          if(isNarrativeRegexConfig(readingConfig))assertNarrativeReadingContent(request.kind==='ShiyiSummaryVerification'?request.sourceMessages??[]:summaryKnowledgeSources(request.sourceMessages??[],readingConfig),readingConfig);
+        }
         let units=estimateModelInputUnits(providerPayload??request);
         const requestLimit=this.requestSafetyUnits??this.maxInputUnits;
         if(units>requestLimit&&request.kind==='ShiyiSummaryVerification'){

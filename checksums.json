@@ -1,7 +1,7 @@
 {
   "index.js": "2eb357a9484cf17fd43d43185901e314e82a94b14ba7c06e76cf2b244f08a419",
-  "src/st-bootstrap.js": "d4bcb2d35e6b07ce002f0b8c610dd027b49ab1fcc144a00426168c1ef97f7493",
-  "src/st-host-adapter.js": "f167a96c7b4b30712d7be72f9a31f3b97a8fa4245012e6fd9d3bdb5636fd3898",
+  "src/st-bootstrap.js": "94a498e5323555c02fc109849242a8df7aaf8d4c16eabf2a212770b1efbb6229",
+  "src/st-host-adapter.js": "475d8b82957b12ea0ddfdd5e35cdb0389c9cebcd32f7ba20143af1f60191904b",
   "src/host-adapter.js": "f7fb6dd917b95333cebcc6d39db01a8acf89a0bf36587cf20cd1d02fd8a72a03",
   "src/errors.js": "f6af25f08c160e740db91881b1bdd0bb26eb9007979b5ecdf6a79c5897d3ed45",
   "src/utils.js": "46c4f73af429204d965385e8ee15d1feea97cb11509bdf30ae4e2cecbd11e306",
@@ -26,7 +26,7 @@
   "src/provider-stream.js": "207c1d4b211e66b9102115587bb09376f106595ea05687afb86252983a35d1f4",
   "src/provider-scheduler.js": "244f2e1fe2b41dbaec793da7372606148e603b38152e4abfda8b841214f9dd09",
   "src/reliable-storage.js": "845461b3c2de0dcf2294057ae23631f49c23621d9814a25322f10673756f5958",
-  "src/product-release.js": "cca9c30dc612b7894410eb30cb401c91e08b51761ff53c8d3a9146a3df39311e",
+  "src/product-release.js": "5f30a4ccab59c3bda6d24bedd566825851861f1a3894a10f18e1c6fbc9577a35",
   "src/dynamic-persona-plan.js": "f719478b3c47f88b8c0139ede136cb92125e0677666d278c24cd21a9aa436b34",
   "src/persona-rebuild.js": "52344589e07f6e69c103cc580cffb1c543cd631128d80c296e85b3945d51d518",
   "src/persona-identity.js": "6df1c636c26fd7365d5dc65ff90b1c340d847489b9a4eefc3089e306e6a7cc8f",
@@ -134,9 +134,9 @@
   "src/st-backup.js": "eeeb352bd9ba215dcc905f70845d978ea22902433e938eafc6d51a663447ef3b",
   "ui/st-backup.js": "ce7ec85e7323dbe22e60e651fcfbdfca37935955ae886d6f63e37ee7ba5b469c",
   "src/user-extractors.js": "0af29be61772d962beca250d670cb9032affdd4d9a7a214d7b7146db09021696",
-  "manifest.json": "b6a5800b215de71b1afa5c84bc69b3aed746423437373be147bde11c4ff61cf3",
+  "manifest.json": "ad66f5f6ca0dbb9bb3f30daf1ec2c9875fde7017bd4558720ade89612fcd64a0",
   "ui/product-view.css": "e6544bd1589bd2c7a11d2ae25644212e3bc44752f62fb275f78de126a61e75d1",
-  "README.md": "f6eaf04951824989aa9b2215a721366dab7949db08e6d5040c47a75348dcc4b9",
-  "CHANGELOG.md": "9113f93b277b983966bab628fa41904fbe87f6cc68590f773c005d4b1dbdfdd7",
+  "README.md": "217488953527e57d9ebea51142c049a9fee71bd299dbf44e6f69b483f944efbe",
+  "CHANGELOG.md": "c1bcd383b905d92848638bcc9e9a2f5bccaab34277194389cd40a0dc247f66e3",
   ".gitattributes": "cc641658d855cb2ba3f269f3248111fa65fa54225c87b56c5c8e98b6d3d574bf"
 }

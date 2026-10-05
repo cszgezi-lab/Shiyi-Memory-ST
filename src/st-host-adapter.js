@@ -27,10 +27,11 @@ const historyDigest = rows => sha256(rows.map(messageIdentity));
 /** Original ST adapter: captured references, server-verified read-only history,
  * separate durable JSON, and native public events. No emulated TT global/API. */
 export class SillyTavernHostAdapter extends HostAdapter {
-  constructor(host = globalThis, { getAccountId, accountId, fetchImpl = globalThis.fetch, deviceStorage = globalThis.localStorage, indexedDB = host.indexedDB ?? globalThis.indexedDB, storageBackend = 'indexeddb', locks = globalThis.navigator?.locks } = {}) {
+  constructor(host = globalThis, { getAccountId, accountId, fetchImpl = globalThis.fetch, nativeHost = host, deviceStorage = globalThis.localStorage, indexedDB = host.indexedDB ?? globalThis.indexedDB, storageBackend = 'indexeddb', locks = globalThis.navigator?.locks } = {}) {
     super(host);
     if (this.root.__TAURITAVERN__) throw error('原版酒馆版本不能用于 TT。', 'HOST_CONTRACT_INVALID');
     this.fetchImpl = fetchImpl;
+    this.nativeHost = nativeHost;
     this.getAccountId = getAccountId ?? (() => accountId);
     this.deviceStorage = deviceStorage;
     this.indexedDB = indexedDB;
@@ -107,11 +108,15 @@ export class SillyTavernHostAdapter extends HostAdapter {
     }
     return freezeDeep({ messages: clone(messages), metadata: clone(metadata), digest });
   }
-  _extensionStore(accountId) {
-    if (!this.extensionStores.has(accountId)) this.extensionStores.set(accountId, createSTStorage({
+  _extensionStore(accountId, { guard } = {}) {
+    const create = () => createSTStorage({
       scope: { accountId, edition: 'sillytavern', scope: 'extension' }, fetchImpl: this.fetchImpl,
-      getRequestHeaders: () => this._headers(), deviceStorage: this.deviceStorage, indexedDB: this.indexedDB, backend: this.storageBackend, locks: this.locks, guard: () => this._assertAccount(accountId),
-    }));
+      getRequestHeaders: () => this._headers(), deviceStorage: this.deviceStorage, indexedDB: this.indexedDB, backend: this.storageBackend, locks: this.locks,
+      guard: async () => { await this._assertAccount(accountId); await guard?.(); },
+    });
+    // A legacy receipt has its own lifetime guard, including queued IDB writes.
+    if (guard) return create();
+    if (!this.extensionStores.has(accountId)) this.extensionStores.set(accountId, create());
     return this.extensionStores.get(accountId);
   }
   async _registry(accountId) {
@@ -238,35 +243,116 @@ export class SillyTavernHostAdapter extends HostAdapter {
 
   /** ST1.19 public CHAT_RENAMED fires after persisted move/reload. Atomically
    * transfer only an established identity; a duplicate/branch is never merged. */
-  async handleChatRenamed(payload) {
+  async handleChatRenamed(payload, { guard = async () => {} } = {}) {
+    await guard();
     const accountId = await this._account();
+    await guard();
     // ST emits original request names, even when the rename endpoint returned a
     // different sanitized basename. Ask its pure filename helper, not a guess
     // from whatever chat happens to be selected after reload.
     const oldChatId = await this._renamedFilename(payload?.oldFileName, accountId);
+    await guard();
     const newChatId = await this._renamedFilename(payload?.newFileName, accountId);
+    await guard();
     const groupId = payload?.groupId == null ? '' : String(payload.groupId);
     const avatar = payload?.avatarId;
     if (!validName(oldChatId) || !validName(newChatId) || oldChatId === newChatId || (!groupId && !validName(avatar))) throw error('聊天重命名事件无效。', 'HOST_CONTRACT_INVALID');
     const base = { host: 'sillytavern', accountId, kind: groupId ? 'group' : 'character', ...(groupId ? { groupId } : { avatar }) };
     return this._serialIdentity(accountId, async () => {
+      await guard();
       const oldRef = { ...base, chatId: oldChatId }, newRef = { ...base, chatId: newChatId };
       const registry = await this._registry(accountId), previous = this._record(registry, oldRef);
+      await guard();
       if (!previous || previous.retired) return { changed: false, reason: 'no_established_identity' };
       const saved = await this._readPersisted(newRef, { current: false });
+      await guard();
       if (saved.metadata.integrity !== previous.integrity) throw error('重命名后的聊天身份不一致，未合并记忆。', 'SOURCE_INVALIDATED');
       if (await this._readPersisted(oldRef, { current: false, missing: true })) throw error('旧聊天仍存在，已拒绝把复制聊天合并。', 'SOURCE_INVALIDATED');
+      await guard();
       const target = this._record(registry, newRef);
       if (target && !target.retired && target.stableId !== previous.stableId) throw error('重命名目标已有独立记忆，未覆盖。', 'SOURCE_INVALIDATED');
       registry.records[locatorKey(oldRef)] = { ...previous, retired: true };
       registry.records[locatorKey(newRef)] = { ...previous, retired: false };
-      await this._extensionStore(accountId).setJson({ ...IDENTITY_ADDRESS, value: registry });
-      return { changed: true, stableId: previous.stableId };
+      await this._extensionStore(accountId, { guard }).setJson({ ...IDENTITY_ADDRESS, value: registry });
+      return { changed: true, stableId: previous.stableId, oldChatId, newChatId };
     });
+  }
+  _legacyRenameRequest(input, init = {}) {
+    let url;
+    try { url = new URL(typeof input === 'string' || input instanceof URL ? input : input?.url, this.nativeHost.location.href); }
+    catch { return null; }
+    if (url.origin !== this.nativeHost.location.origin || url.pathname !== '/api/chats/rename' || url.search || url.hash || String(init.method ?? input?.method ?? 'GET').toUpperCase() !== 'POST' || typeof init.body !== 'string') return null;
+    let body;
+    try { body = JSON.parse(init.body); } catch { return null; }
+    if (!body || Array.isArray(body) || typeof body.original_file !== 'string' || typeof body.renamed_file !== 'string' || !body.original_file.endsWith('.jsonl') || !body.renamed_file.endsWith('.jsonl') || typeof body.is_group !== 'boolean') return null;
+    if (!body.is_group) return { payload: { avatarId: body.avatar_url, oldFileName: body.original_file, newFileName: body.renamed_file } };
+    const context = this._context(), groupId = context?.groupId == null ? '' : String(context.groupId);
+    const chatId = context?.getCurrentChatId?.() ?? context?.chatId;
+    const group = context?.groups?.find(item => String(item.id) === groupId);
+    // ST1.17's request omits the group ID. Only the selected, exact old chat
+    // proves which group is being renamed; another group's rename is refused.
+    if (!groupId || !group || group.chat_id !== chatId || `${chatId}.jsonl` !== body.original_file)
+      return { failure: error('当前酒馆缺少群聊更名通知，无法确认非当前群聊的更名归属；拾忆保留旧存档，未合并记忆。', 'CHAT_IDENTITY_NOT_READY') };
+    return { payload: { groupId, oldFileName: body.original_file, newFileName: body.renamed_file } };
+  }
+  _attachLegacyRenameObserver({ onRenamed, onError }) {
+    const nativeHost = this.nativeHost, originalFetch = nativeHost.fetch;
+    if (typeof originalFetch !== 'function') throw error('原版酒馆更名观察接口不可用。', 'HOST_CONTRACT_INVALID');
+    let active = true;
+    const adapter = this;
+    const wrapper = async function (...args) {
+      const request = active ? adapter._legacyRenameRequest(...args) : null;
+      // Capture the native account before dispatch, without delaying dispatch.
+      let accountTask;
+      if (request) {
+        try { accountTask = Promise.resolve(adapter.getAccountId()).then(nonempty, () => ''); }
+        catch { accountTask = Promise.resolve(''); }
+      }
+      const response = await Reflect.apply(originalFetch, nativeHost, args);
+      if (!request || !active || !response.ok) return response;
+      try {
+        const receipt = await response.clone().json();
+        if (receipt?.ok !== true) return response;
+        const accountId = await accountTask;
+        const guard = async () => {
+          if (!active) throw error('拾忆更名观察已停止。', 'CANCELED');
+          await adapter._assertAccount(accountId);
+          if (!active) throw error('拾忆更名观察已停止。', 'CANCELED');
+        };
+        await guard();
+        if (request.failure) throw request.failure;
+        const result = await adapter.handleChatRenamed(request.payload, { guard });
+        await guard();
+        if (result.changed) {
+          if (onRenamed) await onRenamed(result);
+          else {
+            // Usually native reload follows this returned response and emits
+            // CHAT_CHANGED itself. Do not refresh its still-selected old name.
+            const context = adapter._context(), name = context?.eventTypes?.CHAT_CHANGED;
+            if (name && (context.getCurrentChatId?.() ?? context.chatId) === result.newChatId)
+              await context.eventSource.emit(name, result.newChatId);
+          }
+        }
+      } catch (cause) {
+        if (active && cause?.code !== 'CANCELED' && cause?.name !== 'AbortError') {
+          try { await onError(cause); } catch { /* notification must not change native fetch */ }
+        }
+      }
+      return response;
+    };
+    nativeHost.fetch = wrapper;
+    return () => {
+      active = false;
+      // Keep any wrapper a later extension placed around ours. Its calls into
+      // this detached wrapper simply forward, with no receipt observation.
+      if (nativeHost.fetch === wrapper) nativeHost.fetch = originalFetch;
+    };
   }
   attachRenameListener({ onRenamed = null, onError = () => {} } = {}) {
     if (this.renameUnsubscribe) return this.renameUnsubscribe;
-    const unsubscribe = this.subscribe('CHAT_RENAMED', async payload => {
+    const nativeRenameType = this._context()?.eventTypes?.CHAT_RENAMED;
+    const legacy = typeof nativeRenameType !== 'string' || !nativeRenameType;
+    const unsubscribe = legacy ? this._attachLegacyRenameObserver({ onRenamed, onError }) : this.subscribe('CHAT_RENAMED', async payload => {
       try {
         const result = await this.handleChatRenamed(payload);
         if (result.changed) {

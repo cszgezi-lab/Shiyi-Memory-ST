@@ -16,8 +16,8 @@ export function assertSTHost(host,version){
   const context=host?.SillyTavern?.getContext?.()??host?.getContext?.();
   if(!context||typeof context.getRequestHeaders!=='function'||typeof context.eventSource?.on!=='function'||typeof context.setExtensionPrompt!=='function')
     throw new ShiyiError('原版酒馆接口尚未就绪，请刷新后重试。','ST_HOST_UNAVAILABLE');
-  if(!/^1\.19\.\d+$/.test(String(version??'')))
-    throw new ShiyiError('当前原版版支持 SillyTavern 1.19.x；其它版本尚未验证。','ST_VERSION_UNSUPPORTED');
+  if(!/^1\.(?:17|18|19)\.\d+$/.test(String(version??'')))
+    throw new ShiyiError('当前原版版支持 SillyTavern 1.17.x–1.19.x；其它版本尚未验证。','ST_VERSION_UNSUPPORTED');
   return context;
 }
 
@@ -59,9 +59,9 @@ export async function initST({host=globalThis,importModule=url=>import(url),fetc
     const getAccountId=()=>userModule.getCurrentUserHandle();
     const bridge=createSTWorldbookBridge({context:getContext,worldInfoModule,fetchImpl});
     const facade=createSTHostFacade(host,bridge);
-    const adapter=new STHostAdapter(facade,{fetchImpl,getAccountId,deviceStorage:host.localStorage,locks:host.navigator?.locks});
+    const adapter=new STHostAdapter(facade,{fetchImpl,getAccountId,nativeHost:host,deviceStorage:host.localStorage,locks:host.navigator?.locks});
     await adapter.ready();check();
-    const renameOff=adapter.attachRenameListener?.();
+    const renameOff=adapter.attachRenameListener?.({onError:cause=>host.toastr?.error?.(cause.message??'拾忆未能跟随聊天更名；原存档保留。')});
     let shell;
     try{shell=initProductShell({host:facade,documentRef:host.document,controllerOptions:{adapter,fetchImpl:createSTProductFetch(facade,fetchImpl)}});}
     catch(error){renameOff?.();await adapter.dispose?.();throw error;}

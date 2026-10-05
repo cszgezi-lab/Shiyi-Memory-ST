@@ -3,7 +3,7 @@
   "display_name": "拾忆 · 原版酒馆",
   "author": "Shiyi Memory",
   "description": "原版 SillyTavern 独立版：聊天记忆、动态人设与复盘。",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "homePage": "https://github.com/cszgezi-lab/Shiyi-Memory-ST",
   "auto_update": true,
   "loading_order": 100,

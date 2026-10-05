@@ -10,7 +10,7 @@ import { createWorkspace, importTextDocument, splitDocument,documentPartKey,revi
 import { autoSummaryPlan,summaryCoverage,missingSummaryRanges,advancedStartFloor,hasNewerSavedCoverage } from './product-auto-summary.js';
 import { factSubject,factKey,factValue } from './product-person-profiles.js';
 import { sourceKey } from './product-sources.js';
-import { PRODUCT_SETTING_REGISTRY, persistedProductSettings, validateProductPatch, splitProductSettings } from './product-settings.js';
+import { PRODUCT_SETTING_REGISTRY, persistedProductSettings, validateProductPatch, validateProductEdit, splitProductSettings } from './product-settings.js';
 import { ProviderClient, observeProviderRequests, scheduleProviderRequests } from './provider.js';
 import {createProviderScheduler,shouldPauseProviderBatch,backgroundRetryDelay} from './provider-scheduler.js';
 import { errorDiagnostics, jsonFailure,installDiagnosticBoundary,diagnosticRequestId } from './diagnostics.js';
@@ -117,7 +117,7 @@ export function createProductApplication({ host = globalThis, adapter = null, co
     if(!hostAdapter.getStore)throw new Error('宿主没有提供全局扩展存储');
     return hostAdapter.getStore({scope:'extension'});
   };
-  const apiSettings=createGlobalSettings({getStore:globalStore,onApply:settings=>{core.useGlobalSettings(settings);core.setSessionCredential(effectiveKeys().summary);recallChanged({vectors:true});notify();}});
+  const apiSettings=createGlobalSettings({getStore:globalStore,onApply:settings=>{const recallSettingsChanged=stableStringify({...core.settings,narrativeExtraction:''})!==stableStringify({...settings,narrativeExtraction:''});core.useGlobalSettings(settings);core.setSessionCredential(effectiveKeys().summary);if(recallSettingsChanged)recallChanged({vectors:true});notify();}});
   const credentials=createCredentialStore({getStore:globalStore});
   let autoRunning=false,personaLaunch=null,personaCommandVersion=0;
   const state = { credentialSaved:{},credentialErrors:{}, modules:[],moduleSnapshots:[],moduleCurrent:[],mvuPaths:[],mvuStatus:'no_chat', status: 'unbound', message: '开始总结时自动读取 TT 当前聊天', cards: [], documents: [], history: [], batches: [], records: {}, conversations: [], conversationId: 'main', proposal: null, lastApplied: null, draft: '', preview: null, actual: null, progress: '', savedThrough: -1, hidden: [], stale: false };
@@ -148,7 +148,8 @@ export function createProductApplication({ host = globalThis, adapter = null, co
   function reportError(error,{task='operation',stage='ui',modelRole,action,level='error'}={}){
     if(error&&typeof error==='object'){if(recordedErrors.has(error))return Promise.resolve();recordedErrors.add(error);}
     const details=safeLogDetails({stage,modelRole,action,...errorDiagnostics(error)});
-    return trackDiagnostic((async()=>{const run=await runtimeLog.start(task,{action:details.action,stage:details.stage});runtimeLog.record({run,task,phase:details.code==='CANCELED'?'canceled':'failed',level,details});await runtimeLog.flush();})());
+    const startDetails=Object.fromEntries(['action','stage','code','reason','field','ruleIndex','kind','modelRequested'].filter(key=>Object.hasOwn(details,key)).map(key=>[key,details[key]]));
+    return trackDiagnostic((async()=>{const run=await runtimeLog.start(task,startDetails);runtimeLog.record({run,task,phase:details.code==='CANCELED'?'canceled':'failed',level,details});await runtimeLog.flush();})());
   }
   const stopTransportDiagnostics=observeProviderRequests(fetchImpl,event=>{
     const id=event.details.requestId;
@@ -327,6 +328,12 @@ export function createProductApplication({ host = globalThis, adapter = null, co
       }
       return clone(state.vectorIndex);
     }catch(error){if(version===vectorCheckVersion&&token===epoch){void reportError(error,{task:'vectors',stage:'background'});state.vectorIndex={status:'unavailable',message:failureText(error)};notify();}}
+  }
+  async function readNarrativeSource({floor}={}){
+    assertCurrent();if(!Number.isInteger(floor)||floor<0)throw Error('请填写要预览的聊天楼号');
+    const range=await core.readIndependentRange({startIndex:floor,endIndex:floor});assertCurrent();
+    const source=range.messages.find(m=>m.index===floor);if(!source)throw Error('没有读到这一楼的原文');
+    return clone(source);
   }
   async function warmRecall() {
     const token = epoch, revision = recallRevision;
@@ -622,7 +629,7 @@ export function createProductApplication({ host = globalThis, adapter = null, co
       }
     } catch { setMessage('已打开；宿主不支持自动任务，可手动整理和预览'); }
     setMessage(`已加载当前聊天：${state.cards.length} 条记忆、${state.batches.filter(b=>b.status!=='deleted').length} 个总结批次`);
-    if(passive){state.feedback={id:++feedbackSequence,level:'info',text:state.message};notify();}
+    if(passive){state.feedback={id:++feedbackSequence,kind:'chat',level:'info',text:state.message};notify();}
     return publicState();
     } catch(error){workspace=null;boundScope=null;boundRefKey=null;state.cards=[];state.records={};state.batches=[];state.deletedRecords=[];state.progress='';modules.clear();state.status='unavailable';recallChanged({clear:true});await stopListeners();await clearPrompt();setMessage(`聊天读取未完成：${failureText(error)}`);throw error;
     } finally { opening = false; operations.delete(opener);if(active===opener)active=null;notify();wakeChatFollower();queueAutomaticSummary();dynamicPersona.wake(); }
@@ -707,7 +714,7 @@ export function createProductApplication({ host = globalThis, adapter = null, co
     catch(error){void reportError(error,{task:'background',stage:'background'});state.cards=state.cards.filter(c=>!c.readonly);recallChanged();setMessage('MVU 读取未完成，旧变量未注入；请重新加载当前聊天或刷新变量');}
   }
   async function saveSettings(patch) {
-    const valid=validateProductPatch(patch);
+    const valid=validateProductEdit(patch,core.settings);
     if(valid.personaReviewEnabled===false)dynamicPersona.interruptReview();
     if(valid.dynamicPersonaFactReviewEnabled===false)dynamicPersona.interruptFactReview();
     await loadApiSettings();await apiSettings.save(valid);
@@ -715,8 +722,13 @@ export function createProductApplication({ host = globalThis, adapter = null, co
     if(valid.dynamicPersonaFactReviewEnabled===false)dynamicPersona.interruptFactReview();
     if(!core.settings.injectionEnabled)await clearPrompt();
     if(patch.dynamicPersonaEnabled===false)await dynamicPersona.pause();
+    let readingMessage=null;
+    if(Object.hasOwn(valid,'narrativeExtraction')){
+      readingMessage='标签已保存；下次总结选中楼层时使用。聊天原文和已有结果保留。';
+      state.feedback={id:++feedbackSequence,kind:'chat',level:'success',text:readingMessage};
+    }
     queueAutomaticSummary();dynamicPersona.wake();
-    setMessage('全局设置已保存，所有聊天共用');return {status:'saved',settings:core.settings};
+    setMessage(readingMessage??'全局设置已保存，所有聊天共用');return {status:'saved',settings:core.settings};
   }
   async function saveApi(kind,patch,{keyValue}={}){
     if(!Object.hasOwn(keys,kind))throw new Error('未知模型用途');
@@ -2081,12 +2093,12 @@ export function createProductApplication({ host = globalThis, adapter = null, co
     applyDynamicPersonaManualPrefix:options=>logged('persona',()=>manageDynamicPersonaCandidate('applyManualPrefix',options)),
     processDynamicPersona:async()=>reservePersonaCommand(()=>logged('persona',async run=>{assertNoRetrospective();await dynamicPersona.load();assertNoRetrospective();return dynamicPersona.process({force:true,retry:true});})),pauseDynamicPersona:()=>{personaCommandVersion++;return logged('persona',()=>dynamicPersona.pause());},setDynamicPersonaStart:floor=>dynamicPersona.setStart(floor),editDynamicPersona:(id,patch)=>dynamicPersona.edit(id,patch),setPersonCasting:(name,patch)=>dynamicPersona.setCasting(name,patch),draftDynamicPersonaDirectives:(id,instruction)=>logged('persona',()=>dynamicPersona.draftDirectives(id,instruction)),bindDynamicPersona:(name,targetId)=>dynamicPersona.bind(name,targetId),mergeDynamicPersona:(sourceId,targetId)=>dynamicPersona.merge(sourceId,targetId),undoDynamicPersona:id=>dynamicPersona.undo(id),addDynamicPersona:(name,text)=>dynamicPersona.add(name,text),
     previewDynamicPersonaManual:async options=>{await dynamicPersona.load();return dynamicPersona.previewManual(options);},
+    readNarrativeSource,
     async previewNarrativeExtraction({text,floor,config=core.settings.narrativeExtraction}={}){
-      if(typeof text==='string')return narrativePreview({id:'local-preview',text},config);
-      assertCurrent();if(!Number.isInteger(floor)||floor<0)throw Error('请填写要预览的聊天楼号');
-      const range=await core.readIndependentRange({startIndex:floor,endIndex:floor});assertCurrent();
-      const source=range.messages.find(m=>m.index===floor);if(!source)throw Error('没有读到这一楼的原文');
-      return {...narrativePreview(source,config),floor};
+      try{
+        if(typeof text==='string')return narrativePreview({id:'local-preview',text},config);
+        const source=await readNarrativeSource({floor});return {...narrativePreview(source,config),floor};
+      }catch(error){if(error?.code==='NARRATIVE_REGEX_INVALID')error.details={...error.details,modelRequested:false};throw error;}
     },
     startDynamicPersonaManual:async options=>reservePersonaCommand(()=>logged('persona',async run=>{assertNoRetrospective();if(!enabled)throw new Error('插件已暂停，请先启用插件，再开始手动人设补建');await dynamicPersona.load();await dynamicPersona.createManual(options);await saveSettings({dynamicPersonaEnabled:true});return dynamicPersona.resumeManual();})), 
     continueDynamicPersonaManual:async()=>reservePersonaCommand(()=>logged('persona',async run=>{assertNoRetrospective();if(!enabled)throw new Error('插件已暂停，请先启用插件，再继续手动人设补建');await dynamicPersona.load();if(['paused','running','failed'].includes(dynamicPersona.state.manualPlan?.status))await saveSettings({dynamicPersonaEnabled:true});return dynamicPersona.resumeManual();})), 

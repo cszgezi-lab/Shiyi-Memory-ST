@@ -315,11 +315,11 @@ export function selectRecallCards(cards, settings, {includeAwareness=false}={}) 
   cards=cards.filter(c=>!(c.category==='commitmentChanges'&&c.state==='unknown'));
   cards=cards.filter(c=>c.knowledgeReview?.status!=='pending');
   cards=cards.filter(c=>!c.journalOnly||(settings.journalEnabled!==false&&c.innerLife?.text&&!c.innerLife.disabled));
-  return cards.filter(c => c.customInject !== false && (includeAwareness||c.category !== 'awarenessChanges'||c.standaloneRecall===true) && !['retracted', 'superseded'].includes(c.lifecycleState) && (c.category !== 'conflicts'||c.sourceRefs?.length>0) && (settings.personaEnabled || !['entityFactChanges','personaChanges','relationshipChanges','awarenessChanges'].includes(c.category)) && (settings.performanceEnabled || c.category !== 'performanceHints') && (settings.knowledgeEnabled || c.category !== 'knowledge')).map(c=>projectSourceForRecall(c,settings.narrativeExtraction));
+  return cards.filter(c => c.customInject !== false && (includeAwareness||c.category !== 'awarenessChanges'||c.standaloneRecall===true) && !['retracted', 'superseded'].includes(c.lifecycleState) && (c.category !== 'conflicts'||c.sourceRefs?.length>0) && (settings.personaEnabled || !['entityFactChanges','personaChanges','relationshipChanges','awarenessChanges'].includes(c.category)) && (settings.performanceEnabled || c.category !== 'performanceHints') && (settings.knowledgeEnabled || c.category !== 'knowledge')).map(c=>projectSourceForRecall(c));
 }
 export function prepareRecallIndex(cache, cards, settings, { scopeKey, revision, signal } = {}) {
   if (revision === undefined) throw new Error('recall cache requires a snapshot revision');
-  return cache.prepare(selectRecallCards(cards, settings), { scopeKey, revision: { snapshot: revision, persona: settings.personaEnabled, performance: settings.performanceEnabled, knowledge: settings.knowledgeEnabled,journal:settings.journalEnabled,reading:settings.narrativeExtraction??'' }, k1: settings.bm25K1, b: settings.bm25B, signal });
+  return cache.prepare(selectRecallCards(cards, settings), { scopeKey, revision: { snapshot: revision, persona: settings.personaEnabled, performance: settings.performanceEnabled, knowledge: settings.knowledgeEnabled,journal:settings.journalEnabled }, k1: settings.bm25K1, b: settings.bm25B, signal });
 }
 
 /** Persona modular budget planner (U209, 2026-09-25).

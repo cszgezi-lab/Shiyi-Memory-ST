@@ -1,4 +1,4 @@
-import { clone, isPlainObject } from './utils.js';
+import { clone, isPlainObject, stableStringify } from './utils.js';
 import { readSummaryPresets } from './summary-presets.js';
 import {getNarrativeConfig} from './narrative-extraction.js';
 
@@ -178,6 +178,35 @@ export function validateProductPatch(patch) {
 
 export function defaultProductSettings() {
   return Object.fromEntries(DEFINITIONS.map((definition) => [definition.key, clone(definition.defaultValue)]));
+}
+
+/** Read stored recipe bytes without compiling them; new edits remain strict. */
+export function validateStoredProductPatch(patch){
+  if(!isPlainObject(patch)||!Object.hasOwn(patch,'narrativeExtraction'))return validateProductPatch(patch);
+  const recipe=patch.narrativeExtraction,def=PRODUCT_SETTING_REGISTRY.narrativeExtraction;
+  if(typeof recipe!=='string'||recipe.length>def.maxLength)throw new Error(`${def.label}格式或长度不正确`);
+  const other={...patch};delete other.narrativeExtraction;
+  return {...validateProductPatch(other),narrativeExtraction:recipe};
+}
+
+/** Preserve unchanged stored V2 rules while validating every changed rule. */
+export function validateNarrativeConfigEdit(input,previous){
+  try{return getNarrativeConfig(input);}catch(error){
+    let value,prior;try{value=typeof input==='string'?JSON.parse(input):input;prior=typeof previous==='string'?JSON.parse(previous):previous;}catch{throw error;}
+    if(value?.version!==2||prior?.version!==2||!Array.isArray(value.rules)||!Array.isArray(prior.rules)||value.rules.some(r=>typeof r?.expression!=='string')||prior.rules.some(r=>typeof r?.expression!=='string'))throw error;
+    const shape=v=>getNarrativeConfig({...v,rules:v.rules.map(r=>({...r,expression:'x'}))});
+    const next=shape(value),old=shape(prior),{rules:oldRules,...oldOptions}=old,{rules:nextRules,...nextOptions}=next;
+    if(stableStringify(oldOptions)!==stableStringify(nextOptions))throw error;
+    const before=new Map(prior.rules.map(rule=>[rule.id,rule]));
+    for(const rule of value.rules)if(stableStringify(rule)!==stableStringify(before.get(rule.id)))getNarrativeConfig({version:2,enabled:true,rules:[rule]});
+    return {...next,rules:clone(value.rules)};
+  }
+}
+
+export function validateProductEdit(patch,previous={}){
+  const valid=validateStoredProductPatch(patch);
+  if(Object.hasOwn(valid,'narrativeExtraction'))validateNarrativeConfigEdit(valid.narrativeExtraction,previous.narrativeExtraction);
+  return valid;
 }
 
 /** Normalize only known fields; unknown keys never enter the persisted form. */

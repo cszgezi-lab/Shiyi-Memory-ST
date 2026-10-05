@@ -26,22 +26,21 @@ export function originalSourceText(record) {
   if (!['sourceId','fragmentId','version','swipeId','hash','contentHash'].every(k => (original.sourceRef?.[k] ?? null) === (ref[k] ?? null))) return '';
   if(sha256(original.text)!==ref.contentHash)return '';
   if(typeof record.recallReadingConfig!=='string')return original.text;
-  const config=record.recallReadingConfig,prior=readingCache.get(original);
-  if(prior?.config===config&&prior.raw===original.text)return prior.text;
-  // Rendering/search use a projection. Frozen raw text/hash stay untouched,
-  // including for old records saved before configurable reading existed.
-  const text=narrativeReadingText(narrativeReading({text:original.text},config));
-  readingCache.set(original,{config,raw:original.text,text});return text;
+  const prior=readingCache.get(original);
+  if(prior?.raw===original.text)return prior.text;
+  // Recall applies only the default source safety boundary. User extraction
+  // belongs to selected model-input floors, never to historical recall.
+  const text=narrativeReadingText(narrativeReading({text:original.text},''));
+  readingCache.set(original,{raw:original.text,text});return text;
 }
 
-export function projectSourceForRecall(record,config=''){
+export function projectSourceForRecall(record){
   if(record?.category!=='summaryView'||!record.originalSource)return record;
-  config=typeof config==='string'?config:'';
-  if(record.recallReadingConfig===config)return record;
-  const prior=projectionCache.get(record);if(prior?.config===config)return prior.record;
-  const projected={...record,recallReadingConfig:config},text=originalSourceText(projected);
+  if(record.recallReadingConfig==='')return record;
+  const prior=projectionCache.get(record);if(prior)return prior;
+  const projected={...record,recallReadingConfig:''},text=originalSourceText(projected);
   projected.localSearchText=[record.searchText??record.text??record.description,text].filter(Boolean).join('\n');
-  projectionCache.set(record,{config,record:projected});return projected;
+  projectionCache.set(record,projected);return projected;
 }
 
 const generic = /^(什么|怎么|为什么|怎样|如何|哪个|这个|那个|是否|现在|之前|以前|当时|后来|继续|然后|一下|告诉|关于|他们|她们|究竟|到底|还是|发生|事情|有关|记得|知道|想起|记起|忆起|回想|怀念)$/u;

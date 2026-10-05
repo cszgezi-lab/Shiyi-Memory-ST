@@ -66,6 +66,10 @@ export const DIAGNOSTIC_REASONS = Object.freeze({
   output_blocked:'接口明确报告内容过滤', invalid_chat_response:'接口缺少聊天回复',
   storage_read:'读取存档失败', storage_write:'写入存档失败', storage_readback:'写入后无法读回',
   storage_mismatch:'写入内容与读回内容不一致', storage_decode:'存档完整性校验失败',
+  schema:'正则配置结构检查未通过', syntax:'正则语法检查未通过', flags:'正则选项检查未通过',
+  length:'正则表达式超过允许长度', unsafe:'正则包含可能反复计算的结构',
+  'work-limit':'启用规则累计预计工作量达到本地保护上限；规则序号仅表示触限位置',
+  'match-limit':'启用规则累计匹配数量达到本地保护上限',
   person_delete_busy:'人物记录正在更新，本次尚未开始删除',
   person_delete_stale:'人物记录或删除范围已变化，本次尚未开始删除',
   person_delete_merged:'要移除的心迹或台词来自合并事件，本次尚未开始删除',
@@ -134,7 +138,7 @@ export function nativeStreamErrorCode(message){
   ];
   return prefixes.find(([,pattern])=>pattern.test(line))?.[0];
 }
-export const DIAGNOSTIC_ACTIONS=Object.freeze({editDocumentChunk:'修改资料片段',catchUpAutomatic:'补采未记录楼层',inspectAutomaticProgress:'检查记录覆盖',open:'打开聊天',refresh:'刷新记忆',saveSettings:'保存设置',saveApi:'保存 API',forgetKey:'清除密钥',editRecord:'修改记忆',editPersonProfile:'修改人物档案',deletePerson:'删除人物',deleteRecord:'删除记忆',deleteRecords:'批量删除记忆',remember:'新增记忆',manageBatches:'管理总结批次',deleteBatch:'删除批次',regenerateBatch:'重新总结',retryBatch:'重试总结',retryIncompleteBatches:'重试未完成批次',saveModule:'保存扩展模块',editModuleRecord:'修改扩展记忆',rememberModule:'新增扩展记忆',importModules:'导入模块',exportModules:'导出模块',inspectMvu:'读取 MVU',syncModules:'同步 MVU',applyProposal:'应用助手方案',undoSettings:'撤销配置',saveDictionaryEntry:'修改字典',exportBackup:'导出聊天备份',exportGlobalBackup:'导出全局备份',setAutoStartFloor:'设置自动总结起点',setAutomatic:'配置自动总结',processAutomatic:'执行自动总结',setDraft:'保存助手草稿',newConversation:'新建助手对话',selectConversation:'切换助手对话',deleteConversation:'删除助手对话',hideRecord:'排除记忆',restoreHidden:'恢复被排除记忆',removeDocument:'删除知识库资料',updateDocument:'更新知识库资料',stop:'停止任务',disable:'暂停插件'});
+export const DIAGNOSTIC_ACTIONS=Object.freeze({editDocumentChunk:'修改资料片段',catchUpAutomatic:'补采未记录楼层',inspectAutomaticProgress:'检查记录覆盖',open:'打开聊天',refresh:'刷新记忆',saveSettings:'保存设置',saveApi:'保存 API',forgetKey:'清除密钥',editRecord:'修改记忆',editPersonProfile:'修改人物档案',previewNarrativeExtraction:'预览正文提取',readNarrativeSource:'读取聊天原文',prepareNarrativeReading:'准备正文读取',deletePerson:'删除人物',deleteRecord:'删除记忆',deleteRecords:'批量删除记忆',remember:'新增记忆',manageBatches:'管理总结批次',deleteBatch:'删除批次',regenerateBatch:'重新总结',retryBatch:'重试总结',retryIncompleteBatches:'重试未完成批次',saveModule:'保存扩展模块',editModuleRecord:'修改扩展记忆',rememberModule:'新增扩展记忆',importModules:'导入模块',exportModules:'导出模块',inspectMvu:'读取 MVU',syncModules:'同步 MVU',applyProposal:'应用助手方案',undoSettings:'撤销配置',saveDictionaryEntry:'修改字典',exportBackup:'导出聊天备份',exportGlobalBackup:'导出全局备份',setAutoStartFloor:'设置自动总结起点',setAutomatic:'配置自动总结',processAutomatic:'执行自动总结',setDraft:'保存助手草稿',newConversation:'新建助手对话',selectConversation:'切换助手对话',deleteConversation:'删除助手对话',hideRecord:'排除记忆',restoreHidden:'恢复被排除记忆',removeDocument:'删除知识库资料',updateDocument:'更新知识库资料',stop:'停止任务',disable:'暂停插件'});
 const files=new Set(['provider-scheduler.js','summary-planner.js','request-deadline.js','provider.js','summary-stages.js','summary-context.js','summary-reference-repair.js','summary-engine.js','summary-recovery.js','contracts.js','repository.js','reliable-storage.js','host-adapter.js','dynamic-persona.js','dynamic-persona-worldbook.js','dynamic-persona-stage.js','product-application.js','product-workspace.js','product-network.js','product-shell-controller.js','product-host-adapters.js','product-view.js','product-runtime-log.js','product-model-list.js','product-vector-indexer.js','product-vector-cache.js','product-vector-storage.js','product-dictionary.js','product-event-merge.js','product-credentials.js','product-global-settings.js','product-module-controller.js','diagnostics.js']);
 // JavaException is the WebView wrapper around a throwable raised inside an
 // Android @JavascriptInterface method (TT's native export bridge). Only the
@@ -144,6 +148,8 @@ const errorTypes=new Set(['Error','TypeError','SyntaxError','RangeError','Refere
 files.add('product-host-ui.js');
 files.add('product-people-view.js');
 files.add('product-dynamic-persona.js');
+files.add('narrative-extraction.js');
+files.add('narrative-reading.js');
 files.add('product-android-export.js');
 files.add('summary-verification.js');
 files.add('provider-stream.js');
@@ -162,6 +168,12 @@ export const QUALITY_REASONS=Object.freeze(['证据片段不存在或已变化',
 export function diagnosticRequestId(){return `req-${Date.now().toString(36)}-${(++sequence).toString(36)}`;}
 export function safeDiagnosticFields(value={}){
   const result={};
+  // Fixed regex metadata locates a failed rule without storing its expression,
+  // name, id, source prose or arbitrary exception text. The index is only the
+  // cumulative guard's trigger position, not a per-rule performance judgment.
+  if(['includeRegex','excludeRegex','config'].includes(value?.field))result.field=value.field;
+  if(Number.isSafeInteger(value?.ruleIndex)&&value.ruleIndex>=0&&value.ruleIndex<64)result.ruleIndex=value.ruleIndex;
+  if(['include','exclude'].includes(value?.kind))result.kind=value.kind;
   if(Object.hasOwn(NATIVE_NETWORK_MESSAGES,value?.nativeErrorCode))result.nativeErrorCode=value.nativeErrorCode;
   if(Object.hasOwn(PERSONA_STEPS,value?.personaStep))result.personaStep=value.personaStep;
   if(['tail','before'].includes(value?.historyStep))result.historyStep=value.historyStep;

@@ -17,6 +17,7 @@ CODES.add('FILE_EXPORT_FAILED');
 CODES.add('RETROSPECTIVE_INVALID');
 CODES.add('RETROSPECTIVE_BUDGET');
 CODES.add('RETROSPECTIVE_BUSY');
+CODES.add('NARRATIVE_REGEX_INVALID');
 const NUMBERS = ['plannedBatches','pendingBatches','batchSize','deferredRecords','deferredCommitments','deferredKnowledge','enumQuarantined','journalCount','stageObservations','rejectedDialogues','queueWaitMs','queuePosition','requestElapsedMs','plannedRequests','totalChildren','completedChildren','actualWaitMs','timerLagMs','sourceInputUnits','historyInputUnits','schemaInputUnits','bridgeInputUnits','retryDelayMs','recoveryCalls','batchNumber','childIndex','startIndex','endIndex','sourceCount','inputLimit','inputUnits','maxTokens','elapsedMs','status','expected','received','covered','invalidRows','duplicateCount','promptTokens','completionTokens','totalTokens','reasoningTokens','responseChars','rewrittenSourceSentences','retainedSourceSentences','savedBatches','normalizedFields','normalizedIdentifiers','defaultedValidityFields','repairFields','requestNumber','requestItems','receivedVectors','inputChars','longestInputChars','vectorDimensions','indexedItems','pendingItems','failedItems','beforeInputUnits','afterInputUnits','removedRelevantRecords','recoveryInputTarget','requestedMaxTokens','effectiveMaxTokens','relevantCandidateCount','localMs','vectorMs','rerankMs','totalMs','deadlineMs','usedUnits','candidateCount'];
 NUMBERS.push('personaSystemChars','personaSourceChars','personaBaselineChars','personaNotesChars','personaDevelopmentChars','personaMaterialsChars','personaRequestChars','personaSourceParts','personaNoteParts','personaPeople','personaRequestView');
 export function safeLogDetails(value = {}) {
@@ -72,7 +73,7 @@ function safeEntry(value) {
 /** Fields a phone-sized failure report actually needs. Everything else (stack
  * frames, nested cause chains, validation issue lists) is what made even a
  * filtered export tens of thousands of characters long. */
-const COMPACT_KEYS=['action','reason','stage','storageStage','storageArtifact','saveStage','exportAttempt','exportBytes','hostOperations','code','errorType','causeErrorType','personaStep','personaIssue','personaField','profileIndex','editIndex','recoveryExhausted','modelRequested','modelRole','status','upstreamCode','upstreamHint','startIndex','endIndex','beforeBatches','afterBatches','retainedBatches','removedBatches','candidateBatches','archived','retryDelayMs','stackFrames','validationIssues'];
+const COMPACT_KEYS=['action','reason','field','ruleIndex','kind','stage','storageStage','storageArtifact','saveStage','exportAttempt','exportBytes','hostOperations','code','errorType','causeErrorType','personaStep','personaIssue','personaField','profileIndex','editIndex','recoveryExhausted','modelRequested','modelRole','status','upstreamCode','upstreamHint','startIndex','endIndex','beforeBatches','afterBatches','retainedBatches','removedBatches','candidateBatches','archived','retryDelayMs','stackFrames','validationIssues'];
 /** Local bounded diagnostics. Never accepts prompts, response bodies, keys or URLs. */
 export function createRuntimeLog({getStore,onChange=()=>{},now=()=>Date.now(),ioWaitMs=1000} = {}) {
   let entries=[],store,loaded=false,loading,queue=Promise.resolve(),nextRun=0,nextId=0,persistence='not_loaded';

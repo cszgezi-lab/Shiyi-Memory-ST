@@ -390,7 +390,7 @@ export function productFailure(error) {
   let message=HTTP[status]??NETWORK[code]??CODES[code];
   if(code==='NARRATIVE_REGEX_INVALID'){
     const fields={includeRegex:'提取正则',excludeRegex:'排除正则',config:'标签规则'};
-    const reasons={schema:'保存的规则格式不完整，请编辑相应标签并重新保存。',syntax:'写法不正确，请检查括号、方括号和转义。',flags:'末尾标志不支持或重复，请检查斜杠后的字母。',length:'表达式太长，请缩短。',unsafe:'重复匹配过于复杂，请简化重复分组和量词。', 'work-limit':'这些规则处理当前正文的负担过大，请简化表达式。','match-limit':'匹配次数过多，请缩小要匹配的范围。'};
+    const reasons={schema:'保存的规则格式不完整，请编辑相应标签并重新保存。',syntax:'写法不正确，请检查括号、方括号和转义。',flags:'末尾标志不支持或重复，请检查斜杠后的字母。',length:'表达式太长，请缩短。',unsafe:'重复匹配过于复杂，请简化重复分组和量词。', 'work-limit':'这些规则一起处理这段正文时，累计预计工作量超过本机保护范围；提示的规则只是停止位置，不代表它单独太慢。','match-limit':'这些规则累计匹配到的片段过多，请减少规则或缩小匹配范围。'};
     const label=Object.hasOwn(fields,error?.details?.field)?fields[error.details.field]:'标签规则';
     const index=error?.details?.ruleIndex;
     const field=Number.isSafeInteger(index)&&index>=0&&index<64?`第 ${index+1} 条${label}`:label;

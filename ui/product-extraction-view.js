@@ -1,6 +1,7 @@
 import {esc,field} from '../src/product-settings-ui.js';
 import {normalizeNarrativeConfig,getNarrativeConfig,defaultNarrativeRegexConfig} from '../src/narrative-extraction.js';
 import {failureText} from '../src/product-feedback.js';
+import {validateNarrativeConfigEdit} from '../src/product-settings.js';
 
 export const NARRATIVE_REGEX_EXAMPLES=Object.freeze({
   includeRegex:'/<content\\b[^>]*>([\\s\\S]*?)<\\/content\\s*>/gi',
@@ -10,12 +11,12 @@ export const NARRATIVE_REGEX_EXAMPLES=Object.freeze({
 export function extractionHTML({embedded=false}={}){
   return `<section data-view="extraction" hidden>
 ${embedded?'':'<header class="sy-section-heading"><h3>标签管理</h3></header>'}
-<p class="sy-help">用正则决定提取或排除哪些正文；聊天原文与已有档案保留。</p>
+<p class="sy-help">总结选中楼层时，用正则提取或排除正文；聊天原文与已有档案保留。</p>
 <div data-extraction-rules></div>
 <button type="button" data-extraction-add>新增标签</button>
 <p data-extraction-legacy class="sy-help" hidden></p>
 <section class="sy-extraction-editor" data-extraction-editor hidden>
-  <h4 data-extraction-editor-title>新增标签</h4><p class="sy-help">保存后按这些正则读取。</p>
+  <h4 data-extraction-editor-title>新增标签</h4><p class="sy-help">保存后用于下次总结选中的楼层。</p>
   ${field('用途','<select data-extraction-kind><option value="exclude" selected>排除</option><option value="include">提取</option></select>')}
   ${field('正则表达式','<textarea rows="3" data-extraction-expression spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="sy-extraction-example" placeholder="填写一条完整正则，可写 /表达式/标志"></textarea>')}
   <p id="sy-extraction-example" class="sy-regex-example">示例：<code data-extraction-example></code><small data-extraction-example-help></small></p>
@@ -39,6 +40,16 @@ ${embedded?'':'<header class="sy-section-heading"><h3>标签管理</h3></header>
 }
 
 const copy=value=>JSON.parse(JSON.stringify(value));
+// Display persisted V2 expressions even when one no longer compiles. Validate
+// the same container with inert expressions; never execute or save this copy.
+export function editableNarrativeConfig(stored){
+  try{return getNarrativeConfig(stored);}catch(error){
+    let value;try{value=JSON.parse(stored);}catch{throw error;}
+    if(value?.version!==2||!Array.isArray(value.rules)||value.rules.some(rule=>typeof rule?.expression!=='string'))throw error;
+    getNarrativeConfig({...value,rules:value.rules.map(rule=>({...rule,expression:'x'}))});
+    return copy(value);
+  }
+}
 function regularRules(config){
   if(config.version!==2)return [];
   if(Array.isArray(config.rules))return config.rules.map(rule=>({...rule}));
@@ -129,8 +140,13 @@ export function mountExtractionView({panel,app,run}){
     $('[data-extraction-result]').textContent=result.text;$('[data-extraction-empty]').hidden=Boolean(result.text);
     message(dirty?'预览已更新；编辑草稿尚未保存。':config.enabled===false?'预览已更新；已保存的规则未启用，因此未额外过滤。':'预览已更新；使用当前保存的标签。');
   }
+  function clearOutput(){
+    $('[data-extraction-metrics]').textContent='';$('[data-extraction-warnings]').textContent='';
+    $('[data-extraction-result]').textContent='';$('[data-extraction-empty]').hidden=true;
+  }
   async function saveConfig(next,revision){
-    const normalized=validated(next),serialized=JSON.stringify(normalized);
+    let normalized;clearError();try{normalized=validateNarrativeConfigEdit(next,config);}catch(error){showError(error);throw error;}
+    const serialized=JSON.stringify(normalized);
     await app.saveSettings({narrativeExtraction:serialized});
     loaded=serialized;config=normalized;drawList();
     if(revision!==previewSequence){message('已保存；随后编辑的草稿尚未保存。');return false;}
@@ -148,7 +164,7 @@ export function mountExtractionView({panel,app,run}){
   actions.set('[data-extraction-save]',async()=>{
     if(!editing)return;
     const revision=previewSequence,next=updatedConfig(config,editing.key?editing:null,draftRule());
-    if(await saveConfig(next,revision)){closeEditor();message('已保存；后续读取使用新规则。聊天原文和已有结果保留。');}
+    if(await saveConfig(next,revision)){closeEditor();message('已保存；下次总结选中楼层时使用。聊天原文和已有结果保留。');}
   });
   actions.set('[data-extraction-delete]',async target=>{
     const entry=entriesOf(config).find(entry=>entry.key===target.dataset.extractionDelete);if(!entry)return;
@@ -159,26 +175,33 @@ export function mountExtractionView({panel,app,run}){
     }
   });
   actions.set('[data-extraction-preview]',async()=>{
-    const next=candidateConfig(),id=++previewSequence;
-    try{const result=await app.previewNarrativeExtraction({text:$('[data-extraction-source]').value,config:next});if(id===previewSequence)output(result);}catch(error){showError(error);throw error;}
+    const id=++previewSequence;
+    try{const next=candidateConfig(),result=await app.previewNarrativeExtraction({text:$('[data-extraction-source]').value,config:next});if(id===previewSequence)output(result);}catch(error){if(id===previewSequence){clearOutput();showError(error);message('本次规则未完成预览；测试原文保留，可编辑规则后再预览。');}throw error;}
   });
   actions.set('[data-extraction-chat]',async()=>{
     const floor=Number($('[data-extraction-floor]').value);
     if(!Number.isSafeInteger(floor)||floor<1)throw Error('请填写聊天楼号');
-    const next=candidateConfig(),id=++previewSequence;
-    try{const result=await app.previewNarrativeExtraction({floor,config:next});if(id===previewSequence)output(result);}catch(error){showError(error);throw error;}
+    const id=++previewSequence;
+    try{
+      const source=await app.readNarrativeSource({floor});if(id!==previewSequence)return;
+      $('[data-extraction-source]').value=source.text;
+      const next=candidateConfig(),result=await app.previewNarrativeExtraction({text:source.text,config:next});
+      if(id===previewSequence)output(result);
+    }catch(error){if(id===previewSequence){clearOutput();showError(error);message('本次未完成预览；已读取的原文保留，可编辑规则后再预览。');}throw error;}
   });
   root.addEventListener('click',e=>{
-    for(const [selector,fn] of actions){const target=e.target.closest(selector);if(target&&root.contains(target)){run(()=>fn(target),{name:'extraction',button:target});return;}}
+    for(const [selector,fn] of actions){const target=e.target.closest(selector);if(target&&root.contains(target)){run(()=>fn(target),{name:'extraction',...(['[data-extraction-preview]','[data-extraction-chat]'].includes(selector)?{action:'previewNarrativeExtraction'}:{}),button:target});return;}}
   });
   return {paint(s){
     const stored=s.settings.narrativeExtraction??'';
     if(loaded===stored)return;
     loaded=stored;
     try{
-      config=stored?getNarrativeConfig(stored):defaultNarrativeRegexConfig();drawList();
+      config=stored?editableNarrativeConfig(stored):defaultNarrativeRegexConfig();drawList();
       if(editing){message('保存的标签列表已更新；编辑草稿保留。');return;}
-      clearError();message(legacyOf(config)?'已保留旧规则；可直接预览，或选择一条编辑。':config.enabled===false?'已保存的规则未启用；预览沿用该状态。':stored?'已加载保存的标签。':'还没有标签；可新增一条正则。');
+      clearError();
+      try{getNarrativeConfig(config);}catch(error){showError(error);message('已保留原标签；可编辑或删除出错的一条，再预览。');return;}
+      message(legacyOf(config)?'已保留旧规则；可直接预览，或选择一条编辑。':config.enabled===false?'已保存的规则未启用；预览沿用该状态。':stored?'已加载保存的标签。':'还没有标签；可新增一条正则。');
     }catch{message('保存的规则暂时无法读取；原设置未改，请检查后重试。');}
   }};
 }

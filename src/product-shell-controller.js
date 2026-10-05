@@ -31,6 +31,7 @@ import {
   productSettingConsumers,
   splitProductSettings,
   validateProductPatch,
+  validateStoredProductPatch,
 } from './product-settings.js';
 
 export const PRODUCT_MEMORY_NAMESPACE = 'shiyi-product-memory';
@@ -855,7 +856,7 @@ export function createProductShellController({
     get settings() { return clone(state.settings); },
     get legacyApiSettings() { return clone(legacyApiSettings); },
     get legacySettings() { return clone(legacySettings); },
-    useGlobalSettings(patch) { globalApiSettings=validateProductPatch(patch);Object.assign(state.settings,globalApiSettings);transport=null; },
+    useGlobalSettings(patch) { globalApiSettings=validateStoredProductPatch(patch);Object.assign(state.settings,globalApiSettings);transport=null; },
     async historyTail({includeMessage=false}={}){
       if(!state.session)throw new Error('请先打开聊天');
       const session=state.session,token=bindingGeneration;

@@ -74,10 +74,65 @@ function parseRegexInput(value, field) {
   if (!/^[gimsu]*$/.test(flags) || new Set(flags).size !== flags.length) throw regexFailure(field, 'flags');
   const info = inspectRegexPattern(pattern, field, flags.includes('i'), flags.includes('s'));
   try {
-    return {...info, field, regex: new RegExp(pattern, `${flags.replace(/g/g, '')}gd`)};
+    const nativeFlags = flags.replace(/g/g, '');
+    return {...info, field, regex: new RegExp(pattern, `${nativeFlags}gd`),
+      linearPlan: linearRegexPlan(pattern, nativeFlags)};
   } catch {
     throw regexFailure(field, 'syntax');
   }
+}
+
+// These deliberately small sublanguages have a bound supplied by the original
+// source itself. Do not charge successful short blocks as a scan of every
+// remaining suffix. Everything outside them retains the conservative guard.
+function linearRegexPlan(pattern, flags) {
+  const literal = value => {
+    if (!value) return false;
+    for (let i = 0; i < value.length; i++) {
+      if (value[i] === '\\') {
+        const escaped = value[++i];
+        if (!escaped || !'nrtfv^$\\.*+?()[]{}|/-'.includes(escaped)) return false;
+      } else if ('[\]().*+?{}^$|'.includes(value[i])) return false;
+    }
+    return true;
+  };
+  if (literal(pattern)) return {kind: 'native', nonempty: true};
+
+  const unwrap = value => {
+    if (!value.startsWith('(') || !value.endsWith(')')) return {body: value, capture: false};
+    if (value.startsWith('(?:')) return {body: value.slice(3, -1), capture: false};
+    const named = /^\(\?<[$A-Z_a-z][$\w]*>/.exec(value);
+    if (named) return {body: value.slice(named[0].length, -1), capture: true};
+    if (!value.startsWith('(?')) return {body: value.slice(1, -1), capture: true};
+    return {body: value, capture: false};
+  };
+  const {body} = unwrap(pattern);
+  let atomEnd = 0;
+  if (body.startsWith('[')) {
+    for (let i = 1; i < body.length; i++) {
+      if (body[i] === '\\') i++;
+      else if (body[i] === ']') { atomEnd = i + 1; break; }
+    }
+  } else if (body.startsWith('\\')) {
+    if ('dDsSwWnrtfv^$\\.*+?()[]{}|/-'.includes(body[1] ?? '')) atomEnd = 2;
+  } else if (body[0] && !'[\]()*+?{}^$|'.includes(body[0])) atomEnd = 1;
+  const quantifier = body.slice(atomEnd);
+  if (atomEnd && (!quantifier || /^[*+?]\??$/.test(quantifier))) {
+    return {kind: 'native', nonempty: !quantifier || quantifier[0] === '+'};
+  }
+
+  const xml = pattern.replace(/\\\//g, '/');
+  const opening = /^<([A-Z_a-z][\w:-]*)(\\b)?(\[\^>\]\*)?>/.exec(xml);
+  const closing = /<\/([A-Z_a-z][\w:-]*)(\\s\*)?>$/.exec(xml);
+  if (!opening || !closing || closing.index < opening[0].length) return null;
+  const selected = unwrap(xml.slice(opening[0].length, closing.index));
+  if (selected.body !== '[\\s\\S]*?' && selected.body !== '.*?') return null;
+  const prefix = `<${opening[1]}`;
+  return {kind: 'xml', prefix: new RegExp(prefix, `${flags}g`),
+    boundary: opening[2] ? new RegExp('\\b', `${flags}y`) : null,
+    attributes: Boolean(opening[3]), closing: new RegExp(closing[0], `${flags}g`),
+    captureBody: selected.capture,
+    lines: selected.body === '.*?' && !flags.includes('s') ? /[\r\n\u2028\u2029]/g : null};
 }
 
 // A conservative check before native compilation. It accepts common XML,
@@ -693,26 +748,75 @@ function covered(ranges, start, end) {
   return ranges.some(([a, b]) => a <= start && b >= end);
 }
 
+function linearXmlRanges(text, compiled, captures, budget) {
+  const plan = compiled.linearPlan, ranges = [];
+  plan.prefix.lastIndex = 0;
+  let opening, nextAngle = -1, nextClosing = null, nextLine = null;
+  while ((opening = plan.prefix.exec(text)) !== null) {
+    const prefixEnd = opening.index + opening[0].length;
+    // The nonempty literal prefix advances through source before any failed
+    // boundary, opening or line check can continue to the next candidate.
+    plan.prefix.lastIndex = prefixEnd;
+    if (plan.boundary) {
+      plan.boundary.lastIndex = prefixEnd;
+      if (!plan.boundary.test(text)) continue;
+    }
+    if (plan.attributes && nextAngle < prefixEnd) nextAngle = text.indexOf('>', prefixEnd);
+    const angle = plan.attributes ? nextAngle : prefixEnd;
+    if (angle < 0) break; // No later opener can have its required closing >.
+    if (text[angle] !== '>') continue;
+    const bodyStart = angle + 1;
+    if (!nextClosing || nextClosing.index < bodyStart) {
+      plan.closing.lastIndex = bodyStart;
+      nextClosing = plan.closing.exec(text);
+    }
+    if (!nextClosing) break; // A later opener cannot create a missing closer.
+    if (plan.lines) {
+      if (!nextLine || nextLine.index < bodyStart) {
+        plan.lines.lastIndex = bodyStart;
+        nextLine = plan.lines.exec(text) ?? {index: text.length};
+      }
+      if (nextLine && nextClosing.index > nextLine.index) continue;
+    }
+    const closing = nextClosing;
+    const end = closing.index + closing[0].length;
+    const range = captures && plan.captureBody ? [bodyStart, closing.index] : [opening.index, end];
+    compiled.matchCount++; budget.matches++;
+    if (range[1] > range[0]) ranges.push(range);
+    // Native global lazy-block semantics: the first valid closing delimiter
+    // finishes this whole match, including nested same-name opening tags.
+    plan.prefix.lastIndex = end;
+  }
+  return union(ranges);
+}
+
 function regexInputRanges(text, compiled, captures, budget) {
   if (!compiled) return [];
-  const cost = (text.length + 1) * (compiled.atoms + 1);
-  budget.work += cost;
-  if (compiled.repeated && !compiled.anchored) {
-    if (!compiled.prefix) budget.work += (text.length + 1) ** 2 * (compiled.atoms + 1);
-    else {
-      const needle = compiled.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const starts = new RegExp(needle, compiled.regex.ignoreCase ? 'gi' : 'g');
-      for (const match of text.matchAll(starts)) budget.work += (text.length - match.index + 1) * (compiled.atoms + 1);
-    }
-  }
-  if (budget.work > NARRATIVE_REGEX_LIMITS.work) throw regexFailure(compiled.field, 'work-limit',compiled.ruleIndex===undefined?undefined:compiled);
-  const ranges = [];
   compiled.matchCount = 0;
+  if (compiled.linearPlan?.kind === 'xml') return linearXmlRanges(text, compiled, captures, budget);
+  if (!compiled.linearPlan) {
+    const cost = (text.length + 1) * (compiled.atoms + 1);
+    budget.work += cost;
+    if (compiled.repeated && !compiled.anchored) {
+      if (!compiled.prefix) budget.work += (text.length + 1) ** 2 * (compiled.atoms + 1);
+      else {
+        const needle = compiled.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const starts = new RegExp(needle, compiled.regex.ignoreCase ? 'gi' : 'g');
+        for (const match of text.matchAll(starts)) budget.work += (text.length - match.index + 1) * (compiled.atoms + 1);
+      }
+    }
+    if (budget.work > NARRATIVE_REGEX_LIMITS.work) throw regexFailure(compiled.field, 'work-limit',compiled.ruleIndex===undefined?undefined:compiled);
+  }
+  const ranges = [];
   compiled.regex.lastIndex = 0;
   let match;
   while ((match = compiled.regex.exec(text)) !== null) {
-    compiled.matchCount++;
-    if (++budget.matches > NARRATIVE_REGEX_LIMITS.matches) throw regexFailure(compiled.field, 'match-limit',compiled.ruleIndex===undefined?undefined:compiled);
+    compiled.matchCount++; budget.matches++;
+    // Nonempty proven matches are naturally bounded by source length and the
+    // existing rule count. Unknown and zero-width native searches retain their
+    // shared fixed guard, without charging them for earlier proven matches.
+    if (!compiled.linearPlan?.nonempty && ++budget.guardedMatches > NARRATIVE_REGEX_LIMITS.matches)
+      throw regexFailure(compiled.field, 'match-limit',compiled.ruleIndex===undefined?undefined:compiled);
     const selected = captures && match.indices.length > 1 ? match.indices.slice(1) : [match.indices[0]];
     for (const range of selected) if (range && range[1] > range[0]) ranges.push(range);
     if (!match[0].length) {
@@ -737,7 +841,7 @@ function readNarrativeRegex(source, base, safeRanges, structural, config, stats,
   if(legacy&&!rules.length)return readNarrative(source,config.enabled?legacy:{...legacy,enabled:false},
     options===undefined?qualitySourceSegments(source,{includeStructural:true}):options);
   const active=config.enabled?rules.map((rule,index)=>compileRegexRule(rule,index+legacyCount)):[];
-  const budget = {work: 0, matches: 0};
+  const budget = {work: 0, matches: 0, guardedMatches: 0};
   // Match the single immutable source, then constrain each original range to
   // the established evidence safety slices. No cleaned replacement string is
   // constructed, and exclusions always subtract the complete match.
